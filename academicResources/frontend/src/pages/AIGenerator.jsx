@@ -4,8 +4,8 @@ import { API_URL } from '../config';
 import { useAuth } from '../App';
 import { useNavigate } from 'react-router-dom';
 import {
-  Brain, Sparkles, Save, ChevronLeft, Loader2, FileText,
-  Hash, CheckCircle, Info, Zap, RotateCcw, AlertTriangle,
+  Brain, Sparkles, ChevronLeft, Loader2, FileText,
+  Hash, Info, Zap, RotateCcw, AlertTriangle,
   Smile, Flame,
 } from 'lucide-react';
 import { useToast } from '../components/Toast';
@@ -16,15 +16,15 @@ const DIFFICULTY_OPTS = [
   { value: 'hard',   label: 'Hard',   Icon: Flame, color: '#dc2626', bg: '#fef2f2' },
 ];
 
+const MIN_CHARS = 10;
+
 function AIGenerator() {
-  const [moduleText,  setModuleText]  = useState('');
-  const [moduleName,  setModuleName]  = useState('');
-  const [count,       setCount]       = useState(10);
-  const [difficulty,  setDifficulty]  = useState('medium');
-  const [questions,   setQuestions]   = useState([]);
-  const [loading,     setLoading]     = useState(false);
-  const [saving,      setSaving]      = useState(false);
-  const [lastError,   setLastError]   = useState('');
+  const [moduleText, setModuleText] = useState('');
+  const [moduleName, setModuleName] = useState('');
+  const [count,      setCount]      = useState(10);
+  const [difficulty, setDifficulty] = useState('medium');
+  const [loading,    setLoading]    = useState(false);
+  const [lastError,  setLastError]  = useState('');
 
   const { user } = useAuth();
   const navigate  = useNavigate();
@@ -32,32 +32,62 @@ function AIGenerator() {
 
   const selectedCategory = localStorage.getItem('selectedCategory') || '';
 
+  const diffMeta = DIFFICULTY_OPTS.find(d => d.value === difficulty);
+
   const generate = async () => {
+    if (!user) return toast.error('Please log in to generate questions.');
     if (!moduleText.trim()) return toast.error('Please paste some study text first.');
-    if (moduleText.trim().length < 10) return toast.error('Text too short — paste at least 10 characters.');
-    setLoading(true); setQuestions([]); setLastError('');
+    if (moduleText.trim().length < MIN_CHARS)
+      return toast.error(`Text too short — paste at least ${MIN_CHARS} characters.`);
+
+    setLoading(true);
+    setLastError('');
+
     try {
-      const res  = await fetch(`${API_URL}/api/ai-tests/generate`, {
+      const token = localStorage.getItem('token');
+
+      const genRes  = await fetch(`${API_URL}/api/ai-tests/generate`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ moduleText, count, difficulty }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        const msg = data.message || 'AI failed to generate questions.';
+      const genData = await genRes.json();
+
+      if (!genRes.ok) {
+        const msg = genData.message || 'AI failed to generate questions.';
         setLastError(msg);
         toast.error(msg);
-      } else if (Array.isArray(data) && data.length > 0) {
-        setQuestions(data);
-        toast.success(`Generated ${data.length} questions!`);
-      } else {
+        return;
+      }
+      if (!Array.isArray(genData) || genData.length === 0) {
         const msg = 'AI returned no questions. Try with more detailed text.';
         setLastError(msg);
         toast.error(msg);
+        return;
       }
+
+      const saveRes  = await fetch(`${API_URL}/api/ai-tests/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({
+          moduleName: moduleName.trim() || 'AI Generated Set',
+          questions: genData,
+          category: selectedCategory,
+          difficulty,
+        }),
+      });
+      const saved = await saveRes.json();
+
+      if (!saveRes.ok) {
+        const msg = saved.message || 'Failed to save generated set.';
+        setLastError(msg);
+        toast.error(msg);
+        return;
+      }
+
+      const testId = saved._id || saved.id;
+      navigate(`/ai-test/${testId}`);
+
     } catch {
       const msg = 'Connection error. Please try again.';
       setLastError(msg);
@@ -66,42 +96,6 @@ function AIGenerator() {
       setLoading(false);
     }
   };
-
-  const saveTest = async () => {
-    if (!user) return toast.error('Please log in to save practice sets.');
-    if (questions.length === 0) return;
-    setSaving(true);
-    try {
-      const res = await fetch(`${API_URL}/api/ai-tests/save`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
-        body: JSON.stringify({
-          moduleName: moduleName.trim() || 'AI Generated Set',
-          questions,
-          category: selectedCategory,
-          difficulty,
-        }),
-      });
-      if (res.ok) {
-        toast.success('Practice set saved! Find it in Practice Tests.');
-        setQuestions([]);
-        setModuleName('');
-        /* NOTE: moduleText intentionally kept so user can regenerate from same notes */
-      } else {
-        const d = await res.json();
-        toast.error(d.message || 'Failed to save.');
-      }
-    } catch {
-      toast.error('Connection error. Please try again.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const diffMeta = DIFFICULTY_OPTS.find(d => d.value === difficulty);
 
   return (
     <div>
@@ -118,7 +112,6 @@ function AIGenerator() {
       <div className="page-body">
         <div className="ai-generator-layout">
 
-          {/* Input Panel */}
           <div className="card">
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
               <div style={{ width: 40, height: 40, borderRadius: 10, background: '#f5f3ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -142,12 +135,11 @@ function AIGenerator() {
                 rows={10}
                 style={{ resize: 'vertical', fontFamily: 'inherit' }}
               />
-              <span className="form-hint" style={{ color: moduleText.length < 10 && moduleText.length > 0 ? '#dc2626' : undefined }}>
-                {moduleText.length} characters · Minimum 10 characters · Max 12 000
+              <span className="form-hint" style={{ color: moduleText.length < MIN_CHARS && moduleText.length > 0 ? '#dc2626' : undefined }}>
+                {moduleText.length} characters · Minimum {MIN_CHARS} characters · Max 12 000
               </span>
             </div>
 
-            {/* Difficulty selector */}
             <div className="form-group">
               <label><Zap size={13} style={{ display: 'inline', marginRight: 5 }} />Difficulty Level</label>
               <div style={{ display: 'flex', gap: 8 }}>
@@ -193,7 +185,6 @@ function AIGenerator() {
               </div>
             </div>
 
-            {/* Sticky error/retry banner */}
             {lastError && !loading && (
               <div style={{
                 display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
@@ -212,19 +203,25 @@ function AIGenerator() {
               </div>
             )}
 
+            <div style={{ padding: '12px 16px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, marginBottom: 16, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+              <Info size={15} color="#059669" style={{ flexShrink: 0, marginTop: 1 }}/>
+              <p style={{ margin: 0, fontSize: 13, color: '#166534', lineHeight: 1.5 }}>
+                Questions will be generated and saved automatically. You'll be taken directly to the practice page.
+              </p>
+            </div>
+
             <button
               className="btn btn-primary btn-block btn-lg"
               onClick={generate}
-              disabled={loading || !moduleText.trim() || moduleText.trim().length < 10}
+              disabled={loading || !moduleText.trim() || moduleText.trim().length < MIN_CHARS}
             >
               {loading
-                ? <><Loader2 size={16} className="spin" /> Generating {count} {difficulty} questions…</>
+                ? <><Loader2 size={16} className="spin" /> Generating &amp; saving {count} {difficulty} questions…</>
                 : <><Sparkles size={16} /> Generate {count} {diffMeta?.label} MCQs</>
               }
             </button>
           </div>
 
-          {/* Loading Panel */}
           {loading && (
             <div className="card" style={{ textAlign: 'center', padding: '48px 24px' }}>
               <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#f5f3ff', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
@@ -232,63 +229,8 @@ function AIGenerator() {
               </div>
               <h3 style={{ color: 'var(--text)', marginBottom: 8 }}>AI is thinking…</h3>
               <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>
-                Generating {count} <strong>{difficulty}</strong> questions from your text
+                Generating <strong>{count}</strong> <strong>{difficulty}</strong> questions from your text, then opening the practice page…
               </p>
-            </div>
-          )}
-
-          {/* Results Panel */}
-          {!loading && questions.length > 0 && (
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-                <h2 className="section-heading">
-                  Generated Questions <span className="count-badge">{questions.length}</span>
-                  {diffMeta && (
-                    <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, padding: '2px 8px', borderRadius: 12, background: diffMeta.bg, color: diffMeta.color }}>
-                      {diffMeta.label}
-                    </span>
-                  )}
-                </h2>
-                <button className="btn btn-primary" onClick={saveTest} disabled={saving}>
-                  {saving ? <><Loader2 size={14} className="spin" /> Saving…</> : <><Save size={14} /> Save Practice Set</>}
-                </button>
-              </div>
-
-              <div className="questions-list">
-                {questions.map((q, i) => (
-                  <div key={i} className="question-card">
-                    <div className="question-num">Q{i + 1}</div>
-                    <h3 className="question-text">{q.question}</h3>
-                    <div className="options">
-                      {q.options.map((opt, j) => {
-                        const correct = opt === q.answer;
-                        return (
-                          <div key={j} className={`option-btn${correct ? ' correct' : ''}`}>
-                            <span className="option-letter">{['A', 'B', 'C', 'D'][j]}</span>
-                            {opt}
-                            {correct && <CheckCircle size={14} color="var(--success)" style={{ marginLeft: 'auto' }} />}
-                          </div>
-                        );
-                      })}
-                    </div>
-                    {q.explanation && (
-                      <div className="question-explanation">
-                        <Info size={13} style={{ flexShrink: 0, color: 'var(--primary)' }} />
-                        <strong>Explanation:</strong> {q.explanation}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-
-              <div style={{ marginTop: 24, display: 'flex', gap: 12 }}>
-                <button className="btn btn-primary" onClick={saveTest} disabled={saving}>
-                  {saving ? <><Loader2 size={14} className="spin" /> Saving…</> : <><Save size={14} /> Save Practice Set</>}
-                </button>
-                <button className="btn btn-outline" onClick={() => { setQuestions([]); setLastError(''); }}>
-                  <RotateCcw size={13}/> Clear & Regenerate
-                </button>
-              </div>
             </div>
           )}
         </div>

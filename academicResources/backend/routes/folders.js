@@ -1,33 +1,14 @@
 import express from 'express';
-import jwt from 'jsonwebtoken';
 import Folder from '../models/Folder.js';
 import Resource from '../models/Resource.js';
 import mongoose from 'mongoose';
 import fetch from 'node-fetch';
 import { createRequire } from 'module';
+import { verifyToken, validateObjectId } from '../middleware/auth.js';
 const require = createRequire(import.meta.url);
 const archiver = require('archiver');
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'academic-hub-secret-key';
-
-// Middleware to verify token
-const verifyToken = async (req, res, next) => {
-  try {
-    let token = req.headers.authorization?.split(' ')[1];
-    if (!token || token === 'null' || token === 'undefined') {
-      return res.status(401).json({ message: 'No token provided' });
-    }
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.userId = decoded.id;
-    req.userRole = decoded.role;
-    next();
-  } catch (error) {
-    console.error('verifyToken error:', error.message);
-    res.status(401).json({ message: 'Invalid token' });
-  }
-};
 
 // Get all public folders
 router.get('/public', async (req, res) => {
@@ -46,7 +27,7 @@ router.get('/public', async (req, res) => {
 
     res.json(folders);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -103,7 +84,7 @@ router.get('/root', async (req, res) => {
 
     res.json(folders);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -124,7 +105,7 @@ router.get('/', verifyToken, async (req, res) => {
 
     res.json(folders);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -144,7 +125,7 @@ router.get('/my-folders', verifyToken, async (req, res) => {
 
     res.json(folders);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -152,7 +133,6 @@ router.get('/my-folders', verifyToken, async (req, res) => {
 router.post('/', verifyToken, async (req, res) => {
   try {
     const { name, description, isPublic, parentFolder, category } = req.body;
-    console.log('folder creation request by', req.userId, 'body', req.body);
 
     if (!name || !name.trim()) {
       return res.status(400).json({ message: 'Folder name is required' });
@@ -171,7 +151,7 @@ router.post('/', verifyToken, async (req, res) => {
     res.status(201).json(folder);
   } catch (error) {
     console.error('folder create error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -192,33 +172,50 @@ router.put('/:id', verifyToken, async (req, res) => {
     if (!folder) return res.status(404).json({ message: 'Folder not found or unauthorized' });
     res.json(folder);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
-// Delete folder admin only
-router.delete('/:id', verifyToken, async (req, res) => {
+// Delete folder admin only — unlinks orphaned resources and subfolders
+router.delete('/:id', verifyToken, validateObjectId('id'), async (req, res) => {
   try {
     if (req.userRole !== 'admin') {
       return res.status(403).json({ message: 'Admin access required' });
     }
 
-    const folder = await Folder.findByIdAndDelete(req.params.id);
+    const folder = await Folder.findById(req.params.id);
     if (!folder) {
       return res.status(404).json({ message: 'Folder not found' });
     }
 
+    await Promise.all([
+      // Null-out folder reference so resources become accessible as "unfiled"
+      Resource.updateMany({ folder: req.params.id }, { $unset: { folder: '' } }),
+      // Move child subfolders to root (no parent)
+      Folder.updateMany({ parentFolder: req.params.id }, { $unset: { parentFolder: '' } }),
+      // Delete the folder itself
+      Folder.findByIdAndDelete(req.params.id),
+    ]);
+
     res.json({ message: 'Folder deleted successfully' });
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error('[folder delete]', error.message);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
 // Download all resources in a folder as a ZIP
-router.get('/:id/download-zip', async (req, res) => {
+// Requires auth; only public folders or owner/admin can download
+router.get('/:id/download-zip', verifyToken, validateObjectId('id'), async (req, res) => {
   try {
     const folder = await Folder.findById(req.params.id);
     if (!folder) return res.status(404).json({ message: 'Folder not found' });
+
+    const isOwner = folder.createdBy?.toString() === req.userId;
+    const isAdmin = req.userRole === 'admin';
+    if (!folder.isPublic && !isOwner && !isAdmin) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
 
     const resources = await Resource.find({ folder: req.params.id, status: 'approved' });
     if (!resources.length) {
@@ -255,7 +252,7 @@ router.get('/:id/download-zip', async (req, res) => {
 
     await archive.finalize();
   } catch (error) {
-    if (!res.headersSent) res.status(500).json({ message: error.message });
+    if (!res.headersSent) res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -312,7 +309,7 @@ router.get('/parent/:id', async (req, res) => {
 
     res.json(folders);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 

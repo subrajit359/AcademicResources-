@@ -10,7 +10,6 @@ import {
 const LETTERS = ["A", "B", "C", "D"];
 const fmt = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
-/* ── Animated SVG ring ── */
 function ScoreRing({ score, total }) {
   const pct    = total ? Math.round((score / total) * 100) : 0;
   const r      = 60;
@@ -65,11 +64,36 @@ export default function AITestView() {
   const [loading,    setLoading]    = useState(true);
   const startRef     = useRef(Date.now());
   const questionRefs = useRef([]);
+  const resultRef    = useRef(null);
+
+  /* ── Hide app header / footer / bottom-nav while on this page ── */
+  useEffect(() => {
+    document.body.classList.add("test-active-mode");
+    return () => document.body.classList.remove("test-active-mode");
+  }, []);
 
   /* ── Lock body scroll when submit modal is open ── */
   useEffect(() => {
-    document.body.style.overflow = showModal ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
+    if (showModal) {
+      const scrollY = window.scrollY;
+      document.body.style.overflow = 'hidden';
+      document.body.style.position = 'fixed';
+      document.body.style.top = `-${scrollY}px`;
+      document.body.style.width = '100%';
+    } else {
+      const scrollY = document.body.style.top;
+      document.body.style.overflow = '';
+      document.body.style.position = '';
+      document.body.style.top = '';
+      document.body.style.width = '';
+      window.scrollTo(0, parseInt(scrollY || '0') * -1);
+    }
+    return () => {
+      document.body.style.overflow = '';
+      document.body.style.position = '';
+      document.body.style.top = '';
+      document.body.style.width = '';
+    };
   }, [showModal]);
 
   /* Restore saved answers from localStorage (survives accidental refresh) */
@@ -101,12 +125,20 @@ export default function AITestView() {
       localStorage.setItem(`ai_answers_${id}`, JSON.stringify(answers));
   }, [answers, id]);
 
+  /* ── Scroll to result card after submission (runs after modal cleanup scroll) ── */
+  useEffect(() => {
+    if (!submitted) return;
+    const t = setTimeout(() => {
+      resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 500);
+    return () => clearTimeout(t);
+  }, [submitted]);
+
   const handleSubmit = () => {
     setTimeTaken(Math.round((Date.now() - startRef.current) / 1000));
     setSubmitted(true);
     setShowModal(false);
     localStorage.removeItem(`ai_answers_${id}`);
-    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   if (loading) return (
@@ -133,7 +165,11 @@ export default function AITestView() {
   const unanswered = totalQ - answered;
   const score      = submitted ? questions.filter((q, i) => answers[i] === q.answer).length : 0;
   const scorePct   = submitted && totalQ ? Math.round((score / totalQ) * 100) : 0;
-  const wrongCnt   = submitted ? totalQ - score : 0;
+  const wrongCnt   = submitted ? answered - score : 0;
+  const skippedCnt = submitted ? unanswered : 0;
+
+  const headline = scorePct >= 80 ? "Excellent Work!" : scorePct >= 60 ? "Well Done!" : scorePct >= 40 ? "Good Effort!" : "Keep Practising!";
+  const barGrad  = scorePct >= 70 ? "linear-gradient(90deg,#059669,#34d399)" : scorePct >= 40 ? "linear-gradient(90deg,#d97706,#fbbf24)" : "linear-gradient(90deg,#dc2626,#f87171)";
 
   return (
     <div className="test-active-page">
@@ -169,89 +205,6 @@ export default function AITestView() {
           <div className="topbar-time-fill" style={{ width:`${totalQ ? (answered/totalQ)*100 : 0}%`, background:"#7c3aed" }}/>
         </div>
       </div>
-
-      {/* ══════════ RESULT SCORECARD ══════════ */}
-      {submitted && (
-        <div className="scorecard-hero">
-          <div className="scorecard-hero-bg"/>
-          <div className="scorecard-inner">
-
-            <div className="scorecard-left">
-              <ScoreRing score={score} total={totalQ}/>
-              <Stars pct={scorePct}/>
-              <h2 className="scorecard-headline">
-                {scorePct >= 80 ? "Excellent Work!" : scorePct >= 60 ? "Well Done!" : scorePct >= 40 ? "Good Effort!" : "Keep Practising!"}
-              </h2>
-              <p className="scorecard-sub">{test.moduleName || "AI Practice Set"}</p>
-            </div>
-
-            <div className="scorecard-tiles">
-              <div className="sc-tile sc-tile-correct">
-                <CheckCircle size={22} color="#059669"/>
-                <span className="sc-tile-num">{score}</span>
-                <span className="sc-tile-label">Correct</span>
-              </div>
-              <div className="sc-tile sc-tile-wrong">
-                <XCircle size={22} color="#dc2626"/>
-                <span className="sc-tile-num">{wrongCnt}</span>
-                <span className="sc-tile-label">Wrong</span>
-              </div>
-              <div className="sc-tile sc-tile-skip">
-                <Minus size={22} color="rgba(255,255,255,0.6)"/>
-                <span className="sc-tile-num">{unanswered}</span>
-                <span className="sc-tile-label">Skipped</span>
-              </div>
-              <div className="sc-tile sc-tile-accuracy">
-                <Target size={22} color="#fbbf24"/>
-                <span className="sc-tile-num">{scorePct}%</span>
-                <span className="sc-tile-label">Accuracy</span>
-              </div>
-              <div className="sc-tile sc-tile-time">
-                <Timer size={22} color="#a78bfa"/>
-                <span className="sc-tile-num">{fmt(timeTaken)}</span>
-                <span className="sc-tile-label">Time Taken</span>
-              </div>
-              <div className="sc-tile sc-tile-total">
-                <ListChecks size={22} color="#67e8f9"/>
-                <span className="sc-tile-num">{totalQ}</span>
-                <span className="sc-tile-label">Total Qs</span>
-              </div>
-            </div>
-
-            <div className="scorecard-bar-wrap">
-              <div className="scorecard-bar-label">
-                <span>Score</span><span>{scorePct}%</span>
-              </div>
-              <div className="scorecard-bar-track">
-                <div
-                  className="scorecard-bar-fill"
-                  style={{
-                    width: `${scorePct}%`,
-                    background:
-                      scorePct >= 70 ? "linear-gradient(90deg,#059669,#34d399)" :
-                      scorePct >= 40 ? "linear-gradient(90deg,#d97706,#fbbf24)" :
-                                       "linear-gradient(90deg,#dc2626,#f87171)",
-                  }}
-                />
-              </div>
-              <div className="scorecard-bar-markers">
-                <span>0</span><span>Pass (40%)</span><span>100</span>
-              </div>
-            </div>
-
-            <div className="scorecard-actions">
-              <button className="sc-action-btn sc-review-btn" onClick={() => {
-                document.querySelector(".test-body-layout")?.scrollIntoView({ behavior:"smooth" });
-              }}>
-                <Eye size={16}/> Review & Explanations
-              </button>
-              <button className="sc-action-btn sc-retry-btn" onClick={() => navigate("/test")}>
-                <RotateCcw size={16}/> Back to Tests
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── Body layout ── */}
       <div className="test-body-layout">
@@ -294,7 +247,7 @@ export default function AITestView() {
                 })}
               </div>
 
-              {!submitted && (
+              {!submitted ? (
                 <div className="qnav-bottom">
                   <div className="qnav-summary">
                     <div><span className="qnav-sum-num">{answered}</span><span className="qnav-sum-lbl">Done</span></div>
@@ -306,6 +259,20 @@ export default function AITestView() {
                     onClick={() => setShowModal(true)}
                   >
                     <Send size={14}/> Submit Practice
+                  </button>
+                </div>
+              ) : (
+                <div className="qnav-bottom">
+                  <div className="qnav-summary">
+                    <div><span className="qnav-sum-num" style={{ color:"#059669" }}>{score}</span><span className="qnav-sum-lbl">Correct</span></div>
+                    <div><span className="qnav-sum-num" style={{ color:"#dc2626" }}>{wrongCnt}</span><span className="qnav-sum-lbl">Wrong</span></div>
+                  </div>
+                  <button
+                    className="submit-btn-main"
+                    style={{ marginTop:12, background:"linear-gradient(135deg,#7c3aed,#6d28d9)" }}
+                    onClick={() => resultRef.current?.scrollIntoView({ behavior:"smooth", block:"start" })}
+                  >
+                    <Award size={14}/> View Result
                   </button>
                 </div>
               )}
@@ -364,7 +331,15 @@ export default function AITestView() {
                     })}
                   </div>
 
-                  {/* Correct answer note */}
+                  {/* Skipped note */}
+                  {submitted && skipped && (
+                    <div className="qca-correct-note" style={{ background:"#fffbeb", borderColor:"#fde68a", color:"#92400e" }}>
+                      <AlertTriangle size={13} color="#d97706"/>
+                      <span>You skipped this question — correct answer: <strong>{q.answer}</strong></span>
+                    </div>
+                  )}
+
+                  {/* Correct answer note for wrong answers */}
                   {submitted && isWrong && q.answer && (
                     <div className="qca-correct-note">
                       <Award size={13} color="#059669"/>
@@ -404,7 +379,7 @@ export default function AITestView() {
             })}
           </div>
 
-          {/* bottom submit bar */}
+          {/* ── bottom submit bar (before submission) ── */}
           {!submitted && totalQ > 0 && (
             <div className="test-submit-bar">
               <div className="tsb-info">
@@ -427,15 +402,101 @@ export default function AITestView() {
             </div>
           )}
 
+          {/* ══════════ RESULT CARD — bottom ══════════ */}
           {submitted && (
-            <div className="test-submit-bar">
-              <p style={{ fontSize:14, color:"var(--text-muted)" }}>
-                <Brain size={14} color="#7c3aed" style={{ display:"inline", marginRight:5 }}/>
-                Practice complete — <strong>{score}/{totalQ}</strong> correct ({scorePct}%)
-              </p>
-              <button className="btn btn-primary" onClick={() => navigate("/test")}>
-                <RotateCcw size={14}/> Back to Tests
-              </button>
+            <div ref={resultRef} className="ai-result-card">
+
+              {/* gradient header band */}
+              <div className="ai-result-header">
+                <ScoreRing score={score} total={totalQ}/>
+                <Stars pct={scorePct}/>
+                <h2 className="ai-result-headline">{headline}</h2>
+                <p className="ai-result-sub">{test.moduleName || "AI Practice Set"}</p>
+              </div>
+
+              {/* stat tiles */}
+              <div className="ai-result-tiles">
+                <div className="ai-rt correct">
+                  <CheckCircle size={22} color="#059669"/>
+                  <span className="ai-rt-num">{score}</span>
+                  <span className="ai-rt-lbl">Correct</span>
+                </div>
+                <div className="ai-rt wrong">
+                  <XCircle size={22} color="#dc2626"/>
+                  <span className="ai-rt-num">{wrongCnt}</span>
+                  <span className="ai-rt-lbl">Wrong</span>
+                </div>
+                <div className="ai-rt skipped">
+                  <Minus size={22} color="#d97706"/>
+                  <span className="ai-rt-num">{skippedCnt}</span>
+                  <span className="ai-rt-lbl">Skipped</span>
+                </div>
+                <div className="ai-rt accuracy">
+                  <Target size={22} color="#6366f1"/>
+                  <span className="ai-rt-num">{scorePct}%</span>
+                  <span className="ai-rt-lbl">Accuracy</span>
+                </div>
+                <div className="ai-rt time">
+                  <Timer size={22} color="#7c3aed"/>
+                  <span className="ai-rt-num">{fmt(timeTaken)}</span>
+                  <span className="ai-rt-lbl">Time</span>
+                </div>
+                <div className="ai-rt total">
+                  <ListChecks size={22} color="#0ea5e9"/>
+                  <span className="ai-rt-num">{totalQ}</span>
+                  <span className="ai-rt-lbl">Total Qs</span>
+                </div>
+              </div>
+
+              {/* score bar */}
+              <div className="ai-result-bar-wrap">
+                <div className="ai-result-bar-row">
+                  <span>Score</span><span style={{ fontWeight:700 }}>{scorePct}%</span>
+                </div>
+                <div className="ai-result-bar-track">
+                  <div className="ai-result-bar-fill" style={{ width:`${scorePct}%`, background: barGrad }}/>
+                </div>
+                <div className="ai-result-bar-markers">
+                  <span>0%</span><span>Pass (40%)</span><span>100%</span>
+                </div>
+              </div>
+
+              {/* answer summary breakdown */}
+              <div className="ai-result-breakdown">
+                <div className="ai-rb-row correct">
+                  <CheckCircle size={16} color="#059669"/>
+                  <span className="ai-rb-label">Correct answers</span>
+                  <span className="ai-rb-val" style={{ color:"#059669" }}>{score} of {totalQ}</span>
+                </div>
+                <div className="ai-rb-row wrong">
+                  <XCircle size={16} color="#dc2626"/>
+                  <span className="ai-rb-label">Wrong answers</span>
+                  <span className="ai-rb-val" style={{ color:"#dc2626" }}>{wrongCnt} of {totalQ}</span>
+                </div>
+                <div className="ai-rb-row skipped">
+                  <Minus size={16} color="#d97706"/>
+                  <span className="ai-rb-label">Skipped (no answer)</span>
+                  <span className="ai-rb-val" style={{ color:"#d97706" }}>{skippedCnt} of {totalQ}</span>
+                </div>
+              </div>
+
+              {/* actions */}
+              <div className="ai-result-actions">
+                <button
+                  className="btn btn-outline"
+                  style={{ flex:1 }}
+                  onClick={() => questionRefs.current[0]?.scrollIntoView({ behavior:"smooth", block:"start" })}
+                >
+                  <Eye size={15}/> Review Answers
+                </button>
+                <button
+                  className="btn btn-primary"
+                  style={{ flex:1, background:"linear-gradient(135deg,#7c3aed,#6d28d9)", border:"none" }}
+                  onClick={() => navigate("/test")}
+                >
+                  <RotateCcw size={15}/> Back to Tests
+                </button>
+              </div>
             </div>
           )}
         </div>

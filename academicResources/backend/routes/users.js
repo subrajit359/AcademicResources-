@@ -3,7 +3,7 @@ import multer from 'multer';
 import { CloudinaryStorage } from 'multer-storage-cloudinary';
 import User from '../models/User.js';
 import cloudinary from '../config/cloudinary.js';
-import { verifyToken, verifyAdmin } from '../middleware/auth.js';
+import { verifyToken, verifyAdmin, validateObjectId } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -34,7 +34,7 @@ router.get('/', verifyAdmin, async (req, res) => {
     const users = await User.find().select('-password').sort({ createdAt: -1 });
     res.json(users);
   } catch (err) {
-    res.status(500).json({ message: 'Server error', error: err.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -45,18 +45,53 @@ router.get('/me', verifyToken, async (req, res) => {
     if (!user) return res.status(404).json({ message: 'User not found' });
     res.json(user);
   } catch (err) {
-    res.status(500).json({ message: 'Server error', error: err.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
-/* Get user by ID */
-router.get('/:id', async (req, res) => {
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/* Search users by name — for shoutouts / community features */
+router.get('/search', verifyToken, async (req, res) => {
   try {
+    const q = req.query.q?.trim();
+    if (!q || q.length < 2) return res.json([]);
+    if (q.length > 100) return res.status(400).json({ message: 'Query too long' });
+    const users = await User.find({
+      name: { $regex: escapeRegex(q), $options: 'i' },
+      _id:  { $ne: req.userId },
+    }).select('name avatar role').limit(10);
+    res.json(users);
+  } catch (err) {
+    console.error('[users search]', err.message);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/* Public profile — any authenticated user can view limited info */
+router.get('/:id/public', verifyToken, validateObjectId('id'), async (req, res) => {
+  try {
+    const u = await User.findById(req.params.id).select('name avatar role bio lastSeen');
+    if (!u) return res.status(404).json({ message: 'User not found' });
+    res.json({ _id: u._id, name: u.name, avatar: u.avatar, role: u.role, bio: u.bio, lastSeen: u.lastSeen });
+  } catch (err) {
+    console.error('[users GET /:id/public]', err.message);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/* Get user by ID — requires auth; only own profile or admin */
+router.get('/:id', verifyToken, validateObjectId('id'), async (req, res) => {
+  try {
+    if (req.userRole !== 'admin' && req.userId !== req.params.id) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
     const user = await User.findById(req.params.id).select('-password');
     if (!user) return res.status(404).json({ message: 'User not found' });
     res.json(user);
   } catch (err) {
-    res.status(500).json({ message: 'Server error', error: err.message });
+    console.error('[users GET /:id]', err.message);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -85,7 +120,7 @@ router.put('/profile', verifyToken, async (req, res) => {
       bio: user.bio,
     });
   } catch (err) {
-    res.status(500).json({ message: 'Server error', error: err.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -116,7 +151,7 @@ router.post('/avatar', verifyToken, avatarUpload.single('avatar'), async (req, r
     const userObj = { id: user._id, name: user.name, email: user.email, role: user.role, avatar: user.avatar, bio: user.bio };
     res.json({ avatar: user.avatar, user: userObj });
   } catch (err) {
-    res.status(500).json({ message: 'Upload failed', error: err.message });
+    res.status(500).json({ message: 'Upload failed' });
   }
 });
 
@@ -145,7 +180,7 @@ router.delete('/avatar', verifyToken, async (req, res) => {
     const userObj = { id: user._id, name: user.name, email: user.email, role: user.role, avatar: user.avatar, bio: user.bio };
     res.json({ message: 'Avatar removed', user: userObj });
   } catch (err) {
-    res.status(500).json({ message: 'Server error', error: err.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -161,7 +196,7 @@ router.put('/:id', verifyAdmin, async (req, res) => {
     if (!user) return res.status(404).json({ message: 'User not found' });
     res.json(user);
   } catch (err) {
-    res.status(500).json({ message: 'Server error', error: err.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -177,7 +212,7 @@ router.put('/:id/ban', verifyAdmin, async (req, res) => {
     if (!user) return res.status(404).json({ message: 'User not found' });
     res.json({ message: isBanned ? 'User banned' : 'User unbanned', user });
   } catch (err) {
-    res.status(500).json({ message: 'Server error', error: err.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -197,7 +232,7 @@ router.put('/:id/role', verifyAdmin, async (req, res) => {
     if (!user) return res.status(404).json({ message: 'User not found' });
     res.json({ message: `Role updated to ${role}`, user });
   } catch (err) {
-    res.status(500).json({ message: 'Server error', error: err.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -208,7 +243,7 @@ router.delete('/:id', verifyAdmin, async (req, res) => {
     if (!user) return res.status(404).json({ message: 'User not found' });
     res.json({ message: 'User deleted successfully' });
   } catch (err) {
-    res.status(500).json({ message: 'Server error', error: err.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 

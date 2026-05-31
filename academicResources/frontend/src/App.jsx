@@ -27,6 +27,7 @@ import TeacherDashboard from './pages/TeacherDashboard';
 import TeacherHome from './pages/TeacherHome';
 import TakeTest from './pages/TakeTest';
 import NotFound from './pages/NotFound';
+import Classroom from './pages/Classroom';
 
 import AdminLayout   from './pages/admin/AdminLayout';
 import AdminOverview from './pages/admin/AdminOverview';
@@ -36,10 +37,13 @@ import AdminPending  from './pages/admin/AdminPending';
 import AdminFolders  from './pages/admin/AdminFolders';
 import AdminMessages from './pages/admin/AdminMessages';
 import AdminTests    from './pages/admin/AdminTests';
-import AdminBroadcast from './pages/admin/AdminBroadcast';
-import AdminPublish   from './pages/admin/AdminPublish';
-import PublishedTests  from './pages/PublishedTests';
-import Notifications  from './pages/Notifications';
+import AdminBroadcast  from './pages/admin/AdminBroadcast';
+import AdminPublish    from './pages/admin/AdminPublish';
+import AdminClassroom  from './pages/admin/AdminClassroom';
+import Notifications    from './pages/Notifications';
+import TestHistory       from './pages/TestHistory';
+import Leaderboard       from './pages/Leaderboard';
+import TestLeaderboard   from './pages/TestLeaderboard';
 
 const AuthContext = createContext(null);
 export const useAuth = () => useContext(AuthContext);
@@ -127,6 +131,8 @@ function App() {
                 <Route path="/teacher"       element={(isTeacher || isAdmin) ? <TeacherHome />      : <Navigate to="/" />} />
                 <Route path="/teacher/tests" element={(isTeacher || isAdmin) ? <TeacherDashboard /> : <Navigate to="/" />} />
                 <Route path="/take-test/:shareCode" element={<TakeTest />} />
+                <Route path="/leaderboard"             element={<TestLeaderboard />} />
+                <Route path="/leaderboard/:shareCode" element={<Leaderboard />} />
                 <Route path="/test"      element={user ? <Test />         : <Navigate to="/login" />} />
                 <Route path="/ai-generator" element={user ? <AIGenerator /> : <Navigate to="/login" />} />
                 <Route path="/ai-test/:id"  element={<AITestView/>} />
@@ -137,6 +143,7 @@ function App() {
                 <Route path="/admin/pending"   element={isAdmin ? <AdminLayout><AdminPending /></AdminLayout>   : <Navigate to="/" />} />
                 <Route path="/admin/folders"   element={isAdmin ? <AdminLayout><AdminFolders /></AdminLayout>   : <Navigate to="/" />} />
                 <Route path="/admin/messages"  element={isAdmin ? <AdminLayout><AdminMessages /></AdminLayout>  : <Navigate to="/" />} />
+                <Route path="/admin/classroom" element={isAdmin ? <AdminLayout><AdminClassroom /></AdminLayout> : <Navigate to="/" />} />
 
                 {/* Admin panel — only Users, Tests, Broadcast, Publish */}
                 <Route path="/admin" element={isAdmin ? <AdminLayout /> : <Navigate to="/" />}>
@@ -147,13 +154,14 @@ function App() {
                   <Route path="broadcast"   element={<AdminBroadcast />} />
                 </Route>
 
-                <Route path="/official-tests"  element={user ? <PublishedTests />  : <Navigate to="/login" />} />
+                <Route path="/test-history"    element={user ? <TestHistory /> : <Navigate to="/login" />} />
                 <Route path="/notifications"  element={user ? <Notifications />   : <Navigate to="/login" />} />
+                <Route path="/classroom"      element={user ? <Classroom />       : <Navigate to="/login" />} />
 
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </main>
-            <Footer />
+            {!user && <Footer />}
           </div>
         </Router>
       </AuthContext.Provider>

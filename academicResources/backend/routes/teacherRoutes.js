@@ -7,6 +7,8 @@ import User from "../models/User.js";
 import { sendResultEmail } from "../config/mailer.js";
 import { sendNotification } from "../index.js";
 
+import mongoose from "mongoose";
+
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "academic-hub-secret-key";
 
@@ -32,7 +34,7 @@ router.get("/tests", verifyTeacher, async (req, res) => {
     const tests = await Test.find({ teacherId: req.user._id }).sort({ createdAt: -1 });
     res.json(tests);
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ message: "Server error" });
   }
 });
 
@@ -49,7 +51,7 @@ router.get("/tests/submission-counts", verifyTeacher, async (req, res) => {
     counts.forEach(c => { map[c._id.toString()] = c.count; });
     res.json(map);
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ message: "Server error" });
   }
 });
 
@@ -73,9 +75,25 @@ router.post("/tests", verifyTeacher, async (req, res) => {
       createdBy:   req.user._id.toString(),
     });
     await test.save();
+
+    // Notify followers asynchronously
+    try {
+      const Follow = (await import('../models/Follow.js')).default;
+      const { createFeedEntry } = await import('../models/CommunityFeed.js');
+      const followers = await Follow.find({ followeeId: req.user._id }).select('followerId');
+      const { sendNotification } = await import('../index.js');
+      followers.forEach(f => {
+        const fid = f.followerId.toString();
+        sendNotification(fid, `📝 ${req.user.name} posted a new test: "${test.title}"`, '/community');
+        createFeedEntry(fid, 'teacher_posted', {
+          teacherName: req.user.name, teacherId: req.user._id, testTitle: test.title, testId: test._id,
+        });
+      });
+    } catch { /* non-critical — don't fail the main request */ }
+
     res.status(201).json(test);
   } catch (err) {
-    res.status(500).json({ message: "Failed to create test", error: err.message });
+    res.status(500).json({ message: "Failed to create test" });
   }
 });
 
@@ -98,7 +116,7 @@ router.put("/tests/:id", verifyTeacher, async (req, res) => {
     await test.save();
     res.json(test);
   } catch (err) {
-    res.status(500).json({ message: "Failed to update test", error: err.message });
+    res.status(500).json({ message: "Failed to update test" });
   }
 });
 
@@ -111,7 +129,7 @@ router.delete("/tests/:id", verifyTeacher, async (req, res) => {
     await Result.deleteMany({ testId: req.params.id });
     res.json({ message: "Test deleted" });
   } catch (err) {
-    res.status(500).json({ message: "Failed to delete test", error: err.message });
+    res.status(500).json({ message: "Failed to delete test" });
   }
 });
 
@@ -135,7 +153,7 @@ router.post("/tests/:id/questions", verifyTeacher, async (req, res) => {
     await q.save();
     res.status(201).json(q);
   } catch (err) {
-    res.status(500).json({ message: "Failed to add question", error: err.message });
+    res.status(500).json({ message: "Failed to add question" });
   }
 });
 
@@ -145,7 +163,7 @@ router.get("/tests/:id/questions", verifyTeacher, async (req, res) => {
     const qs = await Question.find({ testId: req.params.id });
     res.json(qs);
   } catch (err) {
-    res.status(500).json({ message: "Failed to fetch questions", error: err.message });
+    res.status(500).json({ message: "Failed to fetch questions" });
   }
 });
 
@@ -213,7 +231,7 @@ router.post("/tests/:id/questions/bulk", verifyTeacher, async (req, res) => {
     const inserted = await Question.insertMany(parsed);
     res.status(201).json({ inserted: inserted.length, skipped: errors.length, errors, questions: inserted });
   } catch (err) {
-    res.status(500).json({ message: "Bulk upload failed", error: err.message });
+    res.status(500).json({ message: "Bulk upload failed" });
   }
 });
 
@@ -229,7 +247,7 @@ router.put("/questions/:qid", verifyTeacher, async (req, res) => {
     if (!q) return res.status(404).json({ message: "Question not found" });
     res.json(q);
   } catch (err) {
-    res.status(500).json({ message: "Failed to update question", error: err.message });
+    res.status(500).json({ message: "Failed to update question" });
   }
 });
 
@@ -239,7 +257,7 @@ router.delete("/questions/:qid", verifyTeacher, async (req, res) => {
     await Question.findByIdAndDelete(req.params.qid);
     res.json({ message: "Question deleted" });
   } catch (err) {
-    res.status(500).json({ message: "Failed to delete question", error: err.message });
+    res.status(500).json({ message: "Failed to delete question" });
   }
 });
 
@@ -276,7 +294,7 @@ router.post("/tests/:id/duplicate", verifyTeacher, async (req, res) => {
     }
     res.status(201).json({ test: copy, questionsCopied: srcQs.length });
   } catch (err) {
-    res.status(500).json({ message: "Failed to duplicate", error: err.message });
+    res.status(500).json({ message: "Failed to duplicate" });
   }
 });
 
@@ -288,7 +306,22 @@ router.get("/tests/:id/results", verifyTeacher, async (req, res) => {
       .sort({ submittedAt: -1 });
     res.json(results);
   } catch (err) {
-    res.status(500).json({ message: "Failed to fetch results", error: err.message });
+    res.status(500).json({ message: "Failed to fetch results" });
+  }
+});
+
+/* ══ PUT /api/teacher/tests/:testId/results/:resultId/allow-reattempt — unlock without deleting ══ */
+router.put("/tests/:testId/results/:resultId/allow-reattempt", verifyTeacher, async (req, res) => {
+  try {
+    const result = await Result.findOneAndUpdate(
+      { _id: req.params.resultId, testId: req.params.testId },
+      { reattemptAllowed: true },
+      { new: true }
+    );
+    if (!result) return res.status(404).json({ message: "Result not found" });
+    res.json({ message: "Student may now re-attempt — previous score is preserved", result });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to allow re-attempt" });
   }
 });
 
@@ -297,9 +330,10 @@ router.get("/share/:shareCode/my-result", async (req, res) => {
   try {
     const { userId } = req.query;
     if (!userId) return res.status(400).json({ message: "userId required" });
-    const test = await Test.findOne({ shareCode: req.params.shareCode, isPublic: true });
+    const test = await Test.findOne({ shareCode: req.params.shareCode, $or: [{ isPublic: true }, { publishStatus: 'approved' }] });
     if (!test) return res.status(404).json({ message: "Test not found" });
-    const existing = await Result.findOne({ userId, testId: test._id });
+    // Block only if there's a result that hasn't been unlocked for re-attempt
+    const existing = await Result.findOne({ userId, testId: test._id, reattemptAllowed: false });
     if (!existing) return res.json({ alreadySubmitted: false });
     const pct = existing.total ? Math.round((existing.score / existing.total) * 100) : 0;
     res.json({
@@ -312,52 +346,72 @@ router.get("/share/:shareCode/my-result", async (req, res) => {
       },
     });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ message: "Server error" });
   }
 });
 
 /* ══ GET /api/teacher/share/:shareCode/review — answers visible only after test ends ══ */
 router.get("/share/:shareCode/review", async (req, res) => {
   try {
-    const test = await Test.findOne({ shareCode: req.params.shareCode, isPublic: true });
+    const test = await Test.findOne({ shareCode: req.params.shareCode, $or: [{ isPublic: true }, { publishStatus: 'approved' }] });
     if (!test) return res.status(404).json({ message: "Test not found or not public" });
     if (!test.endTime || new Date() <= new Date(test.endTime))
       return res.status(403).json({ message: "Answers are only available after the test ends" });
     const questions = await Question.find({ testId: test._id });
     res.json({ test, questions });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ message: "Server error" });
   }
 });
 
 /* ══ GET /api/teacher/share/:shareCode — public, no auth ══ */
 router.get("/share/:shareCode", async (req, res) => {
   try {
-    const test = await Test.findOne({ shareCode: req.params.shareCode, isPublic: true });
+    const test = await Test.findOne({ shareCode: req.params.shareCode, $or: [{ isPublic: true }, { publishStatus: 'approved' }] });
     if (!test) return res.status(404).json({ message: "Test not found or not public" });
     const questions = await Question.find({ testId: test._id }).select("-answer -explanation");
     res.json({ test, questions });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ message: "Server error" });
   }
 });
 
-/* ══ GET /api/teacher/take/:testId — student take by ID, no auth ══ */
+/* ══ GET /api/teacher/take/:testId — student take by ID ══
+   Only allows access if the test is public/approved OR the requester is the owning teacher/admin */
 router.get("/take/:testId", async (req, res) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.testId))
+      return res.status(400).json({ message: "Invalid test ID" });
+
     const test = await Test.findById(req.params.testId);
     if (!test) return res.status(404).json({ message: "Test not found" });
+
+    const isPublicOrApproved = test.isPublic || test.publishStatus === 'approved';
+
+    if (!isPublicOrApproved) {
+      const token = req.headers.authorization?.split(" ")[1];
+      let authorized = false;
+      if (token) {
+        try {
+          const decoded = jwt.verify(token, process.env.JWT_SECRET || "academic-hub-secret-key");
+          authorized = decoded.role === 'admin' || decoded.id === test.teacherId?.toString();
+        } catch { /* invalid token */ }
+      }
+      if (!authorized) return res.status(403).json({ message: "This test is not publicly available" });
+    }
+
     const questions = await Question.find({ testId: test._id }).select("-answer -explanation");
     res.json({ test, questions });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    console.error('[teacher take/:testId]', err.message);
+    res.status(500).json({ message: "Server error" });
   }
 });
 
 /* ══ POST /api/teacher/take/:testId/submit ══ */
 router.post("/take/:testId/submit", async (req, res) => {
   try {
-    const { answers, userName, violations } = req.body;
+    const { answers, userName, violations, questionTimings } = req.body;
     let userId = req.body.userId;
 
     // If a valid token is present, always use the token's userId —
@@ -382,9 +436,9 @@ router.post("/take/:testId/submit", async (req, res) => {
     if (test.endTime && now > new Date(test.endTime))
       return res.status(403).json({ message: "This test has ended" });
 
-    /* Duplicate check */
-    const existing = await Result.findOne({ userId, testId: test._id });
-    if (existing) return res.status(409).json({ message: "You have already submitted this test" });
+    /* Block re-attempt unless teacher explicitly unlocked it */
+    const existingBlocked = await Result.findOne({ userId, testId: test._id, reattemptAllowed: false });
+    if (existingBlocked) return res.status(409).json({ message: "You have already submitted this test" });
 
     const questions = await Question.find({ testId: test._id });
     let score = 0;
@@ -403,6 +457,7 @@ router.post("/take/:testId/submit", async (req, res) => {
       score,
       total: questions.length,
       answers,
+      questionTimings: questionTimings && typeof questionTimings === 'object' ? questionTimings : {},
       violations: Array.isArray(violations)
         ? violations.map(v => ({ reason: v.reason || '', at: v.at ? new Date(v.at) : new Date() }))
         : [],
@@ -447,7 +502,7 @@ router.post("/take/:testId/submit", async (req, res) => {
       }
     }
   } catch (err) {
-    res.status(500).json({ message: "Failed to submit", error: err.message });
+    res.status(500).json({ message: "Failed to submit" });
   }
 });
 
@@ -463,7 +518,7 @@ router.post("/tests/:id/publish-request", verifyTeacher, async (req, res) => {
     await test.save();
     res.json({ message: "Publish request sent to admin", publishStatus: 'pending' });
   } catch (err) {
-    res.status(500).json({ message: "Failed to send request", error: err.message });
+    res.status(500).json({ message: "Failed to send request" });
   }
 });
 
@@ -477,7 +532,7 @@ router.delete("/tests/:id/publish-request", verifyTeacher, async (req, res) => {
     await test.save();
     res.json({ message: "Request cancelled", publishStatus: 'none' });
   } catch (err) {
-    res.status(500).json({ message: "Failed to cancel", error: err.message });
+    res.status(500).json({ message: "Failed to cancel" });
   }
 });
 

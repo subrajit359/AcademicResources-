@@ -1,71 +1,69 @@
 import express from 'express';
-import jwt from 'jsonwebtoken';
 import Resource from '../models/Resource.js';
 import Folder from '../models/Folder.js';
 import { sendNotification } from "../index.js";
 import User from "../models/User.js";
-const JWT_SECRET = process.env.JWT_SECRET || 'academic-hub-secret-key';
+import { verifyToken, verifyAdmin, validateObjectId } from '../middleware/auth.js';
 
-// Middleware to verify token
-const verifyToken = async (req, res, next) => {
-  try {
-    let token = req.headers.authorization?.split(' ')[1];
-    if (!token || token === 'null' || token === 'undefined') {
-      return res.status(401).json({ message: 'No token provided' });
-    }
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.userId = decoded.id;
-    req.userRole = decoded.role;
-    next();
-  } catch (error) {
-    console.error('verifyToken error:', error.message);
-    res.status(401).json({ message: 'Invalid token' });
-  }
-};
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 export default (upload) => {
   const router = express.Router();
 
-  // Get all approved resources (public)
+  // Get all approved resources (public) — paginated
   router.get('/', async (req, res) => {
     try {
       const { search, folder, category } = req.query;
-let query = { status: 'approved' };
+      const page  = Math.max(1, parseInt(req.query.page)  || 1);
+      const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
+      const skip  = (page - 1) * limit;
 
-if (category) {
-  query.category = category;
-}
-
-      if (folder) {
-        query.folder = folder;
-      }
-
+      let query = { status: 'approved' };
+      if (category) query.category = category;
+      if (folder)   query.folder   = folder;
       if (search) {
-        query.title = { $regex: search, $options: 'i' };
+        const safe = String(search).trim().slice(0, 100);
+        if (safe) query.title = { $regex: escapeRegex(safe), $options: 'i' };
       }
 
-      const resources = await Resource.find(query)
-        .populate('uploadedBy', 'name')
-        .populate('folder', 'name')
-        .sort({ createdAt: -1 });
+      const [resources, total] = await Promise.all([
+        Resource.find(query)
+          .populate('uploadedBy', 'name')
+          .populate('folder', 'name')
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit),
+        Resource.countDocuments(query),
+      ]);
 
-      res.json(resources);
+      res.json({ resources, total, page, pages: Math.ceil(total / limit) });
     } catch (error) {
-      res.status(500).json({ message: 'Server error', error: error.message });
+      console.error('[resources list]', error.message);
+      res.status(500).json({ message: 'Server error' });
     }
   });
 
-  // Get user's own resources
+  // Get user's own resources — paginated
   router.get('/my-resources', verifyToken, async (req, res) => {
     try {
-      const resources = await Resource.find({ uploadedBy: req.userId })
-        .populate('folder', 'name')
-        .sort({ createdAt: -1 });
+      const page  = Math.max(1, parseInt(req.query.page)  || 1);
+      const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
+      const skip  = (page - 1) * limit;
+      const query = { uploadedBy: req.userId };
 
-      res.json(resources);
+      const [resources, total] = await Promise.all([
+        Resource.find(query)
+          .populate('folder', 'name')
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit),
+        Resource.countDocuments(query),
+      ]);
+
+      res.json({ resources, total, page, pages: Math.ceil(total / limit) });
     } catch (error) {
-      res.status(500).json({ message: 'Server error', error: error.message });
+      console.error('[my-resources]', error.message);
+      res.status(500).json({ message: 'Server error' });
     }
   });
 
@@ -83,7 +81,7 @@ if (category) {
 
       res.json(resources);
     } catch (error) {
-      res.status(500).json({ message: 'Server error', error: error.message });
+      res.status(500).json({ message: 'Server error' });
     }
   });
 
@@ -101,7 +99,7 @@ if (category) {
 
       res.json(resources);
     } catch (error) {
-      res.status(500).json({ message: 'Server error', error: error.message });
+      res.status(500).json({ message: 'Server error' });
     }
   });
 
@@ -181,15 +179,29 @@ if (category) {
 
       res.status(201).json(resource);
     } catch (error) {
-      res.status(500).json({ message: 'Server error', error: error.message });
+      res.status(500).json({ message: 'Server error' });
     }
   });
 
   // Download route - must be defined BEFORE other routes with :id parameter
+  // Increment view count
+  router.post('/:id/view', async (req, res) => {
+    try {
+      await Resource.findByIdAndUpdate(req.params.id, { $inc: { views: 1 } });
+      res.json({ ok: true });
+    } catch {
+      res.status(500).json({ message: 'Server error' });
+    }
+  });
+
 router.get("/download/:id", async (req, res) => {
   try {
 
-    const resource = await Resource.findById(req.params.id);
+    const resource = await Resource.findByIdAndUpdate(
+      req.params.id,
+      { $inc: { downloads: 1 } },
+      { new: true }
+    );
 
     if (!resource) {
       return res.status(404).json({ message: "Resource not found" });
@@ -232,7 +244,7 @@ router.get("/download/:id", async (req, res) => {
       if (!resource) return res.status(404).json({ message: 'Resource not found' });
       res.json(resource);
     } catch (err) {
-      res.status(500).json({ message: 'Server error', error: err.message });
+      res.status(500).json({ message: 'Server error' });
     }
   });
 
@@ -269,7 +281,7 @@ students.forEach(s => {
 
 res.json(resource);
     } catch (error) {
-      res.status(500).json({ message: 'Server error', error: error.message });
+      res.status(500).json({ message: 'Server error' });
     }
   });
 
@@ -293,7 +305,7 @@ res.json(resource);
 
       res.json(resource);
     } catch (error) {
-      res.status(500).json({ message: 'Server error', error: error.message });
+      res.status(500).json({ message: 'Server error' });
     }
   });
 
@@ -316,7 +328,7 @@ res.json(resource);
 
       res.json({ message: 'Resource deleted successfully' });
     } catch (error) {
-      res.status(500).json({ message: 'Server error', error: error.message });
+      res.status(500).json({ message: 'Server error' });
     }
   });
 

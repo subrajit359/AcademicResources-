@@ -113,8 +113,8 @@ router.post("/generate", verifyToken, async (req, res) => {
     /* Input validation */
     if (!moduleText?.trim())
       return res.status(400).json({ message: "moduleText is required." });
-    if (moduleText.trim().length < 80)
-      return res.status(400).json({ message: "Text is too short. Paste at least 80 characters of study material." });
+    if (moduleText.trim().length < 10)
+      return res.status(400).json({ message: "Text is too short. Paste at least 10 characters of study material." });
 
     /* Count validation */
     const validCount = Math.min(30, Math.max(5, Number(count) || 10));

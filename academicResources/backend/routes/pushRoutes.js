@@ -55,7 +55,7 @@ router.post('/subscribe', verifyToken, async (req, res) => {
     res.status(201).json({ message: 'Subscribed successfully' });
   } catch (error) {
     console.error('[PUSH] Subscribe error:', error.message);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -71,7 +71,7 @@ router.post('/unsubscribe', verifyToken, async (req, res) => {
     }
     res.json({ message: 'Unsubscribed from push notifications' });
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -124,7 +124,7 @@ router.post('/test', verifyToken, async (req, res) => {
     res.json({ message: `Test notification sent! Check your browser.` });
   } catch (error) {
     console.error('[PUSH] Test endpoint error:', error.message);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -142,7 +142,7 @@ router.get('/status', verifyToken, async (req, res) => {
       })),
     });
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 

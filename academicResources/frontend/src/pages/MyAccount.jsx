@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../App';
 import { API_URL } from '../config';
 import { useToast } from '../components/Toast';
@@ -207,7 +208,10 @@ export default function MyAccount() {
     setLoading(true);
     try {
       const res = await fetch(`${API_URL}/api/resources/my-resources`, { headers: authHeader });
-      if (res.ok) setMyResources(await res.json());
+      if (res.ok) {
+        const d = await res.json();
+        setMyResources(Array.isArray(d) ? d : (d.resources || []));
+      }
     } catch { /* silent */ }
     finally { setLoading(false); }
   };
@@ -489,7 +493,7 @@ export default function MyAccount() {
                   <div className="empty-state-icon"><BookOpen size={40} color="var(--primary)" strokeWidth={1.5}/></div>
                   <h3>No uploads yet</h3>
                   <p>Share your first resource with the community</p>
-                  <a href="/upload" className="btn btn-primary" style={{ marginTop:16 }}>Upload Now</a>
+                  <Link to="/upload" className="btn btn-primary" style={{ marginTop:16 }}>Upload Now</Link>
                 </div>
               )}
             </div>

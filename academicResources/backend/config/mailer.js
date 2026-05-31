@@ -6,38 +6,45 @@ const EMAIL_FROM = process.env.EMAIL_FROM || 'noreply@academicrshub.com';
 if (!BREVO_API_KEY) {
   console.error('[MAILER] BREVO_API_KEY is not set — OTP emails will fail');
 } else {
-  console.log('[MAILER] Brevo API ready ✅');
+  console.log('[MAILER] Brevo API ready ✅ (sending as ' + EMAIL_FROM + ')');
 }
 
 export const sendOTPEmail = async (email, otp, name) => {
-  const response = await axios.post(
-    'https://api.brevo.com/v3/smtp/email',
-    {
-      sender: { name: 'Academic Resources Hub', email: EMAIL_FROM },
-      to: [{ email }],
-      subject: 'Your OTP Verification Code',
-      htmlContent: `
-        <div style="font-family:Arial,sans-serif;max-width:480px;margin:auto;padding:24px;border:1px solid #e5e7eb;border-radius:12px;">
-          <div style="text-align:center;margin-bottom:20px;">
-            <h2 style="color:#2563eb;margin:8px 0 0;">Academic Resources Hub</h2>
+  try {
+    const response = await axios.post(
+      'https://api.brevo.com/v3/smtp/email',
+      {
+        sender: { name: 'Academic Resources Hub', email: EMAIL_FROM },
+        to: [{ email }],
+        subject: 'Your OTP Verification Code',
+        htmlContent: `
+          <div style="font-family:Arial,sans-serif;max-width:480px;margin:auto;padding:24px;border:1px solid #e5e7eb;border-radius:12px;">
+            <div style="text-align:center;margin-bottom:20px;">
+              <h2 style="color:#2563eb;margin:8px 0 0;">Academic Resources Hub</h2>
+            </div>
+            <p style="color:#374151;">Hi <strong>${name}</strong>,</p>
+            <p style="color:#374151;">Use the OTP below to verify your email. It expires in <strong>10 minutes</strong>.</p>
+            <div style="background:#eff6ff;border-radius:12px;padding:24px;text-align:center;margin:20px 0;">
+              <div style="font-size:40px;font-weight:800;letter-spacing:12px;color:#2563eb;">${otp}</div>
+            </div>
+            <p style="color:#9ca3af;font-size:13px;">If you didn't request this, ignore this email.</p>
           </div>
-          <p style="color:#374151;">Hi <strong>${name}</strong>,</p>
-          <p style="color:#374151;">Use the OTP below to verify your email. It expires in <strong>10 minutes</strong>.</p>
-          <div style="background:#eff6ff;border-radius:12px;padding:24px;text-align:center;margin:20px 0;">
-            <div style="font-size:40px;font-weight:800;letter-spacing:12px;color:#2563eb;">${otp}</div>
-          </div>
-          <p style="color:#9ca3af;font-size:13px;">If you didn't request this, ignore this email.</p>
-        </div>
-      `,
-    },
-    {
-      headers: {
-        'api-key': BREVO_API_KEY,
-        'Content-Type': 'application/json',
+        `,
       },
-    }
-  );
-  return response.data;
+      {
+        headers: {
+          'api-key': BREVO_API_KEY,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+    console.log(`[MAILER] OTP email sent to ${email} — messageId:`, response.data?.messageId);
+    return response.data;
+  } catch (err) {
+    const detail = err.response?.data || err.message;
+    console.error(`[MAILER] Failed to send OTP to ${email}:`, JSON.stringify(detail));
+    throw new Error(typeof detail === 'object' ? JSON.stringify(detail) : detail);
+  }
 };
 
 export const sendResultEmail = async (teacherEmail, teacherName, studentName, testTitle, score, total) => {
@@ -110,6 +117,7 @@ export const sendPasswordResetEmail = async (email, name, resetUrl) => {
       headers: { 'api-key': BREVO_API_KEY, 'Content-Type': 'application/json' },
     }
   );
+  console.log(`[MAILER] Password reset email sent to ${email} — messageId:`, response.data?.messageId);
   return response.data;
 };
 

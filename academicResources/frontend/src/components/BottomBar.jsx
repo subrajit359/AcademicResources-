@@ -3,29 +3,30 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuth } from '../App';
 import {
-  LayoutDashboard, BookOpen, ClipboardList, User,
-  Shield, Home, Folder, Bell,
+  LayoutDashboard, ClipboardList, User,
+  Shield, Home, MessageSquare,
 } from 'lucide-react';
 
 const TABS_STUDENT = [
-  { icon: LayoutDashboard, label: 'Home',      to: '/category-dashboard', match: ['/', '/category-dashboard', '/choose-category'] },
-  { icon: BookOpen,        label: 'Resources', to: '/resources',          match: ['/resources'] },
-  { icon: ClipboardList,   label: 'Tests',     to: '/official-tests',     match: ['/official-tests'] },
-  { icon: User,            label: 'Account',   to: '/my-account',         match: ['/my-account'] },
+  { icon: Home,            label: 'Home',      to: '/',                   match: ['/'] },
+  { icon: LayoutDashboard, label: 'Dashboard', to: '/choose-category',    match: ['/choose-category', '/category-dashboard'] },
+  { icon: MessageSquare,   label: 'Classroom', to: '/classroom',          match: ['/classroom'] },
+  { icon: User,            label: 'Profile',   to: '/my-account',         match: ['/my-account'] },
 ];
 
 const TABS_TEACHER = [
-  { icon: Home,          label: 'Home',      to: '/teacher',       match: ['/teacher'] },
-  { icon: ClipboardList, label: 'My Tests',  to: '/teacher/tests', match: ['/teacher/tests'] },
-  { icon: BookOpen,      label: 'Resources', to: '/resources',     match: ['/resources'] },
-  { icon: User,          label: 'Account',   to: '/my-account',    match: ['/my-account'] },
+  { icon: Home,            label: 'Home',      to: '/teacher',            match: ['/teacher'] },
+  { icon: ClipboardList,   label: 'My Tests',  to: '/teacher/tests',      match: ['/teacher/tests'] },
+  { icon: MessageSquare,   label: 'Classroom', to: '/classroom',          match: ['/classroom'] },
+  { icon: LayoutDashboard, label: 'Dashboard', to: '/category-dashboard', match: ['/category-dashboard', '/choose-category'] },
+  { icon: User,            label: 'Account',   to: '/my-account',         match: ['/my-account'] },
 ];
 
 const TABS_ADMIN = [
   { icon: LayoutDashboard, label: 'Overview',  to: '/admin/overview',  match: ['/admin/overview'] },
   { icon: ClipboardList,   label: 'Approvals', to: '/admin/pending',   match: ['/admin/pending'] },
-  { icon: BookOpen,        label: 'Resources', to: '/admin/resources', match: ['/admin/resources'] },
-  { icon: Shield,          label: 'Admin',     to: '/admin',           match: ['/admin', '/admin/users', '/admin/tests', '/admin/broadcast', '/admin/publish', '/admin/folders', '/admin/messages'] },
+  { icon: MessageSquare,   label: 'Classroom', to: '/classroom',       match: ['/classroom'] },
+  { icon: Shield,          label: 'Admin',     to: '/admin',           match: ['/admin', '/admin/users', '/admin/tests', '/admin/broadcast', '/admin/publish', '/admin/folders', '/admin/messages', '/admin/classroom'] },
 ];
 
 export default function BottomBar() {
@@ -36,6 +37,13 @@ export default function BottomBar() {
   const show = !!user;
 
   const tabs = isAdmin ? TABS_ADMIN : isTeacher ? TABS_TEACHER : TABS_STUDENT;
+
+  const getTabDestination = (tab) => {
+    if (tab.label === 'Dashboard' && !isAdmin && !isTeacher) {
+      return localStorage.getItem('selectedCategory') ? '/category-dashboard' : '/choose-category';
+    }
+    return tab.to;
+  };
 
   useEffect(() => {
     if (show) {
@@ -69,7 +77,7 @@ export default function BottomBar() {
             <button
               key={tab.to}
               className={`btm-tab${isActive ? ' btm-tab--active' : ''}`}
-              onClick={() => navigate(tab.to)}
+              onClick={() => navigate(getTabDestination(tab))}
               aria-label={tab.label}
               aria-current={isActive ? 'page' : undefined}
             >

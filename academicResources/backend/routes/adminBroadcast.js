@@ -101,7 +101,7 @@ router.post('/', verifyAdmin, async (req, res) => {
       results,
     });
   } catch (err) {
-    res.status(500).json({ message: 'Broadcast failed', error: err.message });
+    res.status(500).json({ message: 'Broadcast failed' });
   }
 });
 

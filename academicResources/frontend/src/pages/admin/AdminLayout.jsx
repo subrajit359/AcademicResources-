@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { AdminProvider, useAdmin } from './AdminContext';
 import {
   LayoutDashboard, Clock, BookOpen, Users, Folder,
-  Mail, ClipboardList, Megaphone, RefreshCw, ChevronRight, Globe,
+  Mail, ClipboardList, Megaphone, RefreshCw, ChevronRight, Globe, MessageSquare,
 } from 'lucide-react';
 
 const HOME_NAV = [
@@ -12,6 +12,7 @@ const HOME_NAV = [
   { to: '/admin/resources', label: 'Resources', Icon: BookOpen },
   { to: '/admin/folders',   label: 'Folders',   Icon: Folder },
   { to: '/admin/messages',  label: 'Messages',  Icon: Mail },
+  { to: '/admin/classroom', label: 'Classroom', Icon: MessageSquare },
 ];
 
 const PANEL_NAV = [

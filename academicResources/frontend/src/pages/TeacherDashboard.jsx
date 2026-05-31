@@ -10,10 +10,11 @@ import {
   ChevronDown, ChevronUp, Loader2, CheckCircle, XCircle,
   Clock, Users, BookOpen, Link2, Eye, Send,
   Timer, X, GraduationCap, Trophy, Target,
-  Globe, AlertCircle, BadgeCheck, Pencil, Download, Files, FlaskConical, ShieldAlert,
+  Globe, AlertCircle, BadgeCheck, Pencil, Download, Files, FlaskConical, ShieldAlert, Upload,
 } from "lucide-react";
 import { useToast } from "../components/Toast";
 import { ConfirmModal } from "./AdminModals";
+import { useScrollLock } from "../hooks/useScrollLock";
 
 const LETTERS = ["A", "B", "C", "D"];
 const fmt = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -59,6 +60,322 @@ function ShareCodePanel({ code, shareUrl }) {
           <a className="sc-open-btn" href={`/#/take-test/${code}`} target="_blank" rel="noreferrer">
             <Eye size={12}/> Open
           </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════
+   TEACHER QUESTIONS MODAL
+══════════════════════════════════════════════════ */
+function TeacherQuestionsModal({ test, onClose, toast }) {
+  useScrollLock();
+  const [questions, setQuestions] = useState([]);
+  const pgQ = usePagination(questions, 5);
+  const [loading,     setLoading]     = useState(true);
+  const [mode,        setMode]        = useState(null); // null | 'add' | 'bulk'
+  /* single add */
+  const [q,       setQ]       = useState('');
+  const [opts,    setOpts]    = useState(['','','','']);
+  const [ansIdx,  setAnsIdx]  = useState(0);
+  const [expl,    setExpl]    = useState('');
+  const [adding,  setAdding]  = useState(false);
+  /* bulk */
+  const [bulkText,    setBulkText]    = useState('');
+  const [bulkLoading, setBulkLoading] = useState(false);
+  /* edit */
+  const [editingQ,    setEditingQ]    = useState(null);
+  const [editText,    setEditText]    = useState('');
+  const [editOpts,    setEditOpts]    = useState(['','','','']);
+  const [editAnsIdx,  setEditAnsIdx]  = useState(0);
+  const [editSaving,  setEditSaving]  = useState(false);
+
+  const authH  = { Authorization: `Bearer ${localStorage.getItem('token')}` };
+  const authHJ = { ...authH, 'Content-Type': 'application/json' };
+
+  useEffect(() => {
+    fetch(`${API_URL}/api/teacher/tests/${test._id}/questions`, { headers: authH })
+      .then(r => r.json())
+      .then(d => setQuestions(Array.isArray(d) ? d : []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [test._id]);
+
+  const handleAdd = async () => {
+    if (!q.trim()) return;
+    setAdding(true);
+    const res = await fetch(`${API_URL}/api/teacher/tests/${test._id}/questions`, {
+      method: 'POST', headers: authHJ,
+      body: JSON.stringify({ question: q, options: opts, answer: opts[ansIdx], explanation: expl }),
+    });
+    if (res.ok) {
+      const newQ = await res.json();
+      setQuestions(prev => [...prev, newQ]);
+      setQ(''); setOpts(['','','','']); setAnsIdx(0); setExpl(''); setMode(null);
+      toast.success('Question added!');
+    } else toast.error('Failed to add question');
+    setAdding(false);
+  };
+
+  const handleBulk = async () => {
+    if (!bulkText.trim()) return;
+    setBulkLoading(true);
+    const res = await fetch(`${API_URL}/api/teacher/tests/${test._id}/questions/bulk`, {
+      method: 'POST', headers: authHJ,
+      body: JSON.stringify({ text: bulkText }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      setQuestions(prev => [...prev, ...(data.questions || [])]);
+      setBulkText(''); setMode(null);
+      toast.success(`${data.inserted} question${data.inserted !== 1 ? 's' : ''} uploaded!`);
+      if (data.skipped > 0) toast.error(`${data.skipped} block(s) skipped — check format.`);
+    } else toast.error(data.message || 'Bulk upload failed');
+    setBulkLoading(false);
+  };
+
+  const handleFileRead = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const raw = ev.target.result;
+      if (file.name.endsWith('.json')) {
+        try {
+          const arr = JSON.parse(raw);
+          const text = arr.map(item => {
+            const os = (item.options || []).map((o, i) => `${LETTERS[i]}) ${o}`).join('\n');
+            const ai = (item.options || []).indexOf(item.answer);
+            return `${item.question || item.title}\n${os}\nAnswer: ${ai >= 0 ? LETTERS[ai] : 'A'}`;
+          }).join('\n\n');
+          setBulkText(text);
+        } catch { toast.error('Invalid JSON file'); }
+      } else {
+        setBulkText(raw);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const startEdit = (qu) => {
+    setEditingQ(qu._id); setMode(null);
+    setEditText(qu.question || qu.title || '');
+    setEditOpts(qu.options?.length ? [...qu.options] : ['','','','']);
+    const ai = (qu.options || []).indexOf(qu.answer);
+    setEditAnsIdx(ai >= 0 ? ai : 0);
+  };
+  const cancelEdit = () => { setEditingQ(null); setEditText(''); setEditOpts(['','','','']); setEditAnsIdx(0); };
+
+  const handleSaveEdit = async (qId) => {
+    if (!editText.trim()) return;
+    setEditSaving(true);
+    const res = await fetch(`${API_URL}/api/teacher/questions/${qId}`, {
+      method: 'PUT', headers: authHJ,
+      body: JSON.stringify({ question: editText, options: editOpts, answer: editOpts[editAnsIdx] }),
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      setQuestions(prev => prev.map(x => x._id === qId ? updated : x));
+      cancelEdit(); toast.success('Question updated');
+    } else toast.error('Failed to update question');
+    setEditSaving(false);
+  };
+
+  const handleDelete = async (qId) => {
+    const res = await fetch(`${API_URL}/api/teacher/questions/${qId}`, { method: 'DELETE', headers: authH });
+    if (res.ok) { setQuestions(prev => prev.filter(x => x._id !== qId)); toast.success('Question deleted'); }
+    else toast.error('Failed to delete');
+  };
+
+  return (
+    <div style={{ position:'fixed', inset:0, zIndex:1200, background:'rgba(0,0,0,0.52)', display:'flex', alignItems:'center', justifyContent:'center', padding:'16px 12px', touchAction:'none', overscrollBehavior:'none', overflowX:'hidden' }}
+      onClick={onClose}>
+      <div style={{ background:'#fff', borderRadius:16, width:'100%', maxWidth:700, maxHeight:'90vh', display:'flex', flexDirection:'column', overflow:'hidden', boxShadow:'0 20px 60px rgba(0,0,0,0.22)', boxSizing:'border-box' }}
+        onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div style={{ padding:'16px 20px', borderBottom:'1px solid #e5e7eb', display:'flex', alignItems:'center', gap:12, background:'#fff' }}>
+          <div style={{ flex:1 }}>
+            <div style={{ fontWeight:700, fontSize:16, color:'#1e293b' }}>Manage Questions</div>
+            <div style={{ fontSize:12, color:'#6366f1', fontWeight:600, marginTop:2 }}>{test.title}</div>
+          </div>
+          <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', padding:4, borderRadius:6, color:'#64748b' }}>
+            <X size={18}/>
+          </button>
+        </div>
+
+        {/* Action bar */}
+        <div style={{ padding:'10px 16px', borderBottom:'1px solid #e5e7eb', display:'flex', gap:8, alignItems:'center', background:'#f8fafc', flexWrap:'wrap', rowGap:6 }}>
+          <button className="btn btn-outline btn-sm"
+            onClick={() => { setMode(mode === 'add' ? null : 'add'); setEditingQ(null); }}
+            style={mode === 'add' ? { background:'#eff6ff', borderColor:'#6366f1', color:'#6366f1' } : {}}>
+            <Plus size={13}/> Add Question
+          </button>
+          <button className="btn btn-outline btn-sm"
+            onClick={() => { setMode(mode === 'bulk' ? null : 'bulk'); setEditingQ(null); }}
+            style={mode === 'bulk' ? { background:'#f5f3ff', borderColor:'#7c3aed', color:'#7c3aed' } : { color:'#7c3aed', borderColor:'#c4b5fd' }}>
+            <Upload size={13}/> Bulk Upload
+          </button>
+          <span style={{ marginLeft:'auto', fontSize:12, color:'#64748b', fontWeight:600, whiteSpace:'nowrap' }}>
+            {questions.length} question{questions.length !== 1 ? 's' : ''}
+          </span>
+        </div>
+
+        {/* Body */}
+        <div style={{ flex:1, overflowY:'auto', overflowX:'hidden', padding:'16px 14px' }}>
+
+          {/* Add single question */}
+          {mode === 'add' && (
+            <div style={{ background:'#f8fafc', border:'1.5px solid #6366f1', borderRadius:10, padding:'14px 16px', marginBottom:16 }}>
+              <div style={{ fontWeight:700, fontSize:13, marginBottom:10, color:'#1e293b', display:'flex', alignItems:'center', gap:6 }}>
+                <Plus size={14} color="#6366f1"/> Add New Question
+              </div>
+              <div style={{ marginBottom:10 }}>
+                <label style={{ fontSize:12, fontWeight:600, display:'block', marginBottom:4 }}>Question *</label>
+                <textarea rows={2} value={q} onChange={e => setQ(e.target.value)} placeholder="Type the question here…"
+                  style={{ width:'100%', padding:'8px 10px', borderRadius:7, border:'1.5px solid #e5e7eb', fontSize:13, resize:'vertical', fontFamily:'inherit', boxSizing:'border-box' }}/>
+              </div>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(130px, 1fr))', gap:8, marginBottom:10 }}>
+                {opts.map((o, i) => (
+                  <div key={i} style={{ display:'flex', alignItems:'center', gap:6, minWidth:0 }}>
+                    <button type="button" onClick={() => setAnsIdx(i)}
+                      style={{ minWidth:24, width:24, height:24, flexShrink:0, borderRadius:'50%', border:`2px solid ${ansIdx===i?'#6366f1':'#d1d5db'}`, background:ansIdx===i?'#6366f1':'#fff', color:ansIdx===i?'#fff':'#64748b', fontWeight:700, fontSize:11, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}
+                      title="Mark as correct">{LETTERS[i]}</button>
+                    <input value={o} onChange={e => setOpts(opts.map((x,j) => j===i ? e.target.value : x))}
+                      placeholder={`Option ${LETTERS[i]}`}
+                      style={{ flex:1, minWidth:0, padding:'6px 8px', borderRadius:6, border:'1.5px solid #e5e7eb', fontSize:13, boxSizing:'border-box', width:'100%' }}/>
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginBottom:10 }}>
+                <label style={{ fontSize:12, fontWeight:600, display:'block', marginBottom:4 }}>Explanation (optional)</label>
+                <input value={expl} onChange={e => setExpl(e.target.value)} placeholder="Why is this the correct answer?"
+                  style={{ width:'100%', padding:'6px 10px', borderRadius:7, border:'1.5px solid #e5e7eb', fontSize:13, boxSizing:'border-box' }}/>
+              </div>
+              <div style={{ display:'flex', gap:8 }}>
+                <button className="btn btn-primary btn-sm" onClick={handleAdd} disabled={adding || !q.trim()}>
+                  {adding ? <><Loader2 size={12} className="spin"/> Adding…</> : <><Check size={12}/> Add Question</>}
+                </button>
+                <button className="btn btn-outline btn-sm" onClick={() => { setMode(null); setQ(''); setOpts(['','','','']); setAnsIdx(0); setExpl(''); }}>Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {/* Bulk upload */}
+          {mode === 'bulk' && (
+            <div style={{ background:'#faf5ff', border:'1.5px solid #7c3aed', borderRadius:10, padding:'14px 16px', marginBottom:16 }}>
+              <div style={{ fontWeight:700, fontSize:13, marginBottom:4, color:'#1e293b', display:'flex', alignItems:'center', gap:6 }}>
+                <Upload size={14} color="#7c3aed"/> Bulk Upload Questions
+              </div>
+              <p style={{ fontSize:11, color:'#64748b', marginBottom:8, lineHeight:1.5 }}>
+                Paste questions below (blank line between each block) or upload a <code>.txt</code> / <code>.json</code> file.
+              </p>
+              <pre style={{ fontSize:10, background:'#f1f5f9', borderRadius:6, padding:'8px 10px', marginBottom:10, lineHeight:1.6, whiteSpace:'pre-wrap', color:'#374151', margin:'0 0 10px' }}>{`What is 2 + 2?
+A) 3
+B) 4
+C) 5
+D) 6
+Answer: B
+
+Capital of India?
+A) Mumbai
+B) Kolkata
+C) New Delhi
+D) Chennai
+Answer: C`}</pre>
+              <textarea rows={8} value={bulkText} onChange={e => setBulkText(e.target.value)}
+                placeholder="Paste your questions here…"
+                style={{ width:'100%', padding:'8px 10px', borderRadius:7, border:'1.5px solid #c4b5fd', fontSize:12, resize:'vertical', fontFamily:'monospace', boxSizing:'border-box', marginBottom:8 }}/>
+              <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+                <button className="btn btn-sm" style={{ background:'#7c3aed', color:'#fff', border:'none' }}
+                  onClick={handleBulk} disabled={bulkLoading || !bulkText.trim()}>
+                  {bulkLoading ? <><Loader2 size={12} className="spin"/> Uploading…</> : <><Upload size={12}/> Upload Questions</>}
+                </button>
+                <label className="btn btn-outline btn-sm" style={{ cursor:'pointer' }}>
+                  <Upload size={12}/> From File
+                  <input type="file" accept=".txt,.json" onChange={handleFileRead} style={{ display:'none' }}/>
+                </label>
+                <button className="btn btn-outline btn-sm" onClick={() => { setMode(null); setBulkText(''); }}>Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {/* Questions list */}
+          {loading ? (
+            <div style={{ textAlign:'center', padding:32 }}><Loader2 size={28} className="spin" color="#6366f1"/></div>
+          ) : questions.length === 0 ? (
+            <div style={{ textAlign:'center', padding:32, color:'#94a3b8' }}>
+              <BookOpen size={36} strokeWidth={1.2} color="#d1d5db"/>
+              <p style={{ marginTop:8 }}>No questions yet. Add one above.</p>
+            </div>
+          ) : (
+            <div className="qm-list">
+              {pgQ.slice.map((qu, i) => {
+                const num = (pgQ.page - 1) * 5 + i + 1;
+                return (
+                  <div key={qu._id} className="qm-item">
+                    {editingQ === qu._id ? (
+                      <div className="qm-edit-form" style={{ width:'100%' }}>
+                        <div className="qm-edit-header">
+                          <span className="qm-item-num">Q{num}</span>
+                          <span style={{ fontSize:12, color:'#6366f1', fontWeight:600 }}>Editing</span>
+                        </div>
+                        <div style={{ marginBottom:10 }}>
+                          <label style={{ fontSize:12, fontWeight:600, display:'block', marginBottom:4 }}>Question *</label>
+                          <textarea rows={2} value={editText} onChange={e => setEditText(e.target.value)}
+                            style={{ width:'100%', padding:'8px 10px', borderRadius:7, border:'1.5px solid #e5e7eb', fontSize:13, resize:'vertical', fontFamily:'inherit', boxSizing:'border-box' }}/>
+                        </div>
+                        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(130px, 1fr))', gap:8, marginBottom:10 }}>
+                          {editOpts.map((o, j) => (
+                            <div key={j} style={{ display:'flex', alignItems:'center', gap:6, minWidth:0 }}>
+                              <button type="button" onClick={() => setEditAnsIdx(j)}
+                                style={{ minWidth:24, width:24, height:24, flexShrink:0, borderRadius:'50%', border:`2px solid ${editAnsIdx===j?'#6366f1':'#d1d5db'}`, background:editAnsIdx===j?'#6366f1':'#fff', color:editAnsIdx===j?'#fff':'#64748b', fontWeight:700, fontSize:11, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}
+                              >{LETTERS[j]}</button>
+                              <input value={o} onChange={e => setEditOpts(editOpts.map((x,k) => k===j ? e.target.value : x))}
+                                placeholder={`Option ${LETTERS[j]}`}
+                                style={{ flex:1, minWidth:0, padding:'6px 8px', borderRadius:6, border:'1.5px solid #e5e7eb', fontSize:13, boxSizing:'border-box', width:'100%' }}/>
+                            </div>
+                          ))}
+                        </div>
+                        <div style={{ display:'flex', gap:8 }}>
+                          <button className="btn btn-primary btn-sm" onClick={() => handleSaveEdit(qu._id)} disabled={editSaving || !editText.trim()}>
+                            {editSaving ? <><Loader2 size={12} className="spin"/> Saving…</> : <><Check size={12}/> Save</>}
+                          </button>
+                          <button className="btn btn-outline btn-sm" onClick={cancelEdit}>Cancel</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="qm-item-num">Q{num}</div>
+                        <div className="qm-item-content">
+                          <div className="qm-item-text">{qu.question || qu.title}</div>
+                          <div className="qm-item-opts">
+                            {(qu.options || []).map((o, j) => (
+                              <span key={j} className={`qm-opt${o === qu.answer ? ' qm-opt-correct' : ''}`}>
+                                {LETTERS[j]}. {o}{o === qu.answer && <Check size={10} strokeWidth={3}/>}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        <div style={{ display:'flex', gap:6, flexShrink:0 }}>
+                          <button className="qm-edit-btn" onClick={() => startEdit(qu)} title="Edit"><Pencil size={13}/></button>
+                          <button className="qm-delete-btn" onClick={() => handleDelete(qu._id)} title="Delete"><Trash2 size={13}/></button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+              <Pagination {...pgQ}/>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding:'12px 20px', borderTop:'1px solid #e5e7eb', display:'flex', justifyContent:'flex-end', background:'#f8fafc' }}>
+          <button className="btn btn-outline btn-sm" onClick={onClose}>Close</button>
         </div>
       </div>
     </div>
@@ -115,6 +432,8 @@ export default function TeacherDashboard() {
   const [resTestId, setResTestId]   = useState(null);
   const [results,   setResults]     = useState([]);
   const [resLoading, setResLoading] = useState(false);
+  const [sortField, setSortField]   = useState('score');   // 'score'|'date'|'attempt'|'name'
+  const [sortDir,   setSortDir]     = useState('desc');    // 'asc'|'desc'
 
   const [confirmDlg, setConfirmDlg] = useState(null);
 
@@ -123,6 +442,9 @@ export default function TeacherDashboard() {
   const [bulkText,    setBulkText]    = useState('');
   const [bulkLoading, setBulkLoading] = useState(false);
   const [bulkResult,  setBulkResult]  = useState(null);
+
+  /* manage questions modal */
+  const [manageQModal, setManageQModal] = useState(null); // test object | null
 
   /* expanded question list per test card */
   const [expandedTest, setExpandedTest] = useState(null);
@@ -141,6 +463,24 @@ export default function TeacherDashboard() {
   const [studentDetail,  setStudentDetail]  = useState(null); // { result, questions }
   const [detailLoading,  setDetailLoading]  = useState(false);
 
+  /* lock body scroll for editQModal / studentDetail (iOS-safe; others use useScrollLock) */
+  useEffect(() => {
+    if (editQModal || studentDetail) {
+      const y = window.scrollY;
+      document.body.style.overflow = 'hidden';
+      document.body.style.position = 'fixed';
+      document.body.style.top = `-${y}px`;
+      document.body.style.width = '100%';
+      return () => {
+        document.body.style.position = '';
+        document.body.style.top = '';
+        document.body.style.width = '';
+        document.body.style.overflow = '';
+        window.scrollTo(0, y);
+      };
+    }
+  }, [editQModal, studentDetail]);
+
   /* submission counts per test */
   const [subCounts,  setSubCounts]  = useState({});
 
@@ -158,18 +498,59 @@ export default function TeacherDashboard() {
   const [addToExpl,    setAddToExpl]    = useState('');
   const [addToSaving,  setAddToSaving]  = useState(false);
 
+  /* bulk upload for existing tests (My Tests tab) */
+  const [addToTestBulkMode,    setAddToTestBulkMode]    = useState(false);
+  const [addToTestBulkText,    setAddToTestBulkText]    = useState('');
+  const [addToTestBulkLoading, setAddToTestBulkLoading] = useState(false);
+
   const notify = (type, msg) => type === "success" ? toast.success(msg) : toast.error(msg);
 
   const shareUrl = (code) =>
     `${window.location.origin}/#/take-test/${code}`;
 
-  const sortedResults = useMemo(() => [...results].sort((a, b) => {
-    const pA = a.total ? a.score / a.total : 0;
-    const pB = b.total ? b.score / b.total : 0;
-    return pB - pA;
-  }), [results]);
-  const pgMyTests  = usePagination(tests, 6);
-  const pgResults  = usePagination(sortedResults, 15);
+  /* Map each result._id → attempt number (per student, chronological) — must come before sortedResults */
+  const attemptMap = useMemo(() => {
+    const byStudent = {};
+    results.forEach(r => {
+      const uid = r.userId?._id || r.userId || 'unknown';
+      if (!byStudent[uid]) byStudent[uid] = [];
+      byStudent[uid].push(r);
+    });
+    Object.values(byStudent).forEach(arr =>
+      arr.sort((a, b) => new Date(a.submittedAt || a.createdAt) - new Date(b.submittedAt || b.createdAt))
+    );
+    const map = {};
+    Object.values(byStudent).forEach(arr =>
+      arr.forEach((r, idx) => { map[r._id] = idx + 1; })
+    );
+    return map;
+  }, [results]);
+
+  const sortedResults = useMemo(() => {
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return [...results].sort((a, b) => {
+      if (sortField === 'score') {
+        const pA = a.total ? a.score / a.total : 0;
+        const pB = b.total ? b.score / b.total : 0;
+        return (pA - pB) * dir;
+      }
+      if (sortField === 'date') {
+        return (new Date(a.submittedAt || a.createdAt) - new Date(b.submittedAt || b.createdAt)) * dir;
+      }
+      if (sortField === 'attempt') {
+        const aA = attemptMap[a._id] || 1;
+        const aB = attemptMap[b._id] || 1;
+        return (aA - aB) * dir;
+      }
+      if (sortField === 'name') {
+        return ((a.userId?.name || '').localeCompare(b.userId?.name || '')) * dir;
+      }
+      return 0;
+    });
+  }, [results, sortField, sortDir, attemptMap]);
+
+  const pgMyTests  = usePagination(tests, 5);
+  const pgResults  = usePagination(sortedResults, 10);
 
   /* ── Load my tests ── */
   useEffect(() => {
@@ -301,7 +682,59 @@ export default function TeacherDashboard() {
     finally { setResLoading(false); }
   };
 
-  /* ── Bulk upload ── */
+  const allowReAttempt = (r) => {
+    const name = r.userId?.name || 'this student';
+    const testTitle = tests.find(t => t._id === resTestId)?.title || 'this test';
+    setConfirmDlg({
+      msg: `Allow ${name} to re-attempt "${testTitle}"? Their previous score will be kept.`,
+      type: 'warning',
+      confirmLabel: 'Allow Re-attempt',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`${API_URL}/api/teacher/tests/${resTestId}/results/${r._id}/allow-reattempt`, {
+            method: 'PUT', headers: authH,
+          });
+          if (res.ok) {
+            setResults(prev => prev.map(x => x._id === r._id ? { ...x, reattemptAllowed: true } : x));
+            toast.success(`${name} can now re-attempt — previous score is preserved`);
+          } else {
+            toast.error('Failed to allow re-attempt');
+          }
+        } catch { toast.error('Failed to allow re-attempt'); }
+      },
+    });
+  };
+
+  /* ── Bulk upload for existing tests ── */
+  const handleBulkUploadToTest = async (testId) => {
+    if (!addToTestBulkText.trim()) return;
+    setAddToTestBulkLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/teacher/tests/${testId}/questions/bulk`, {
+        method: 'POST',
+        headers: { ...authH, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: addToTestBulkText }),
+      });
+      const data = await res.json();
+      if (!res.ok) { toast.error(data.message || 'Bulk upload failed'); return; }
+      setTestQs(prev => ({ ...prev, [testId]: [...(prev[testId] || []), ...(data.questions || [])] }));
+      setAddToTestBulkText('');
+      setAddToTestBulkMode(false);
+      toast.success(`${data.inserted} question${data.inserted !== 1 ? 's' : ''} added!`);
+    } catch { toast.error('Connection error'); }
+    finally { setAddToTestBulkLoading(false); }
+  };
+
+  const handleFileReadForTest = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => setAddToTestBulkText(ev.target.result || '');
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  /* ── Bulk upload (Create Test flow) ── */
   const handleFileRead = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -392,12 +825,12 @@ export default function TeacherDashboard() {
   const exportCsv = () => {
     if (!results.length) return;
     const testTitle = tests.find(t => t._id === resTestId)?.title || 'test';
-    const rows = [['#', 'Student Name', 'Email', 'Score', 'Total', 'Percentage', 'Grade', 'Submitted At']];
+    const rows = [['#', 'Attempt', 'Student Name', 'Email', 'Score', 'Total', 'Percentage', 'Grade', 'Submitted At']];
     [...results].sort((a, b) => (b.total ? b.score / b.total : 0) - (a.total ? a.score / a.total : 0))
       .forEach((r, i) => {
         const pct = r.total ? Math.round((r.score / r.total) * 100) : 0;
         const grade = pct >= 90 ? 'A+' : pct >= 80 ? 'A' : pct >= 70 ? 'B' : pct >= 60 ? 'C' : pct >= 40 ? 'D' : 'F';
-        rows.push([i + 1, r.userId?.name || 'Unknown', r.userId?.email || '', r.score, r.total, `${pct}%`, grade, new Date(r.submittedAt || r.createdAt).toLocaleString()]);
+        rows.push([i + 1, `#${attemptMap[r._id] || 1}`, r.userId?.name || 'Unknown', r.userId?.email || '', r.score, r.total, `${pct}%`, grade, new Date(r.submittedAt || r.createdAt).toLocaleString()]);
       });
     const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -525,6 +958,7 @@ export default function TeacherDashboard() {
               </button>
             </div>
           ) : (
+            <>
             <div className="td-test-grid">
               {pgMyTests.slice.map(t => (
                 <div key={t._id} className="td-test-card">
@@ -560,7 +994,7 @@ export default function TeacherDashboard() {
                   {editTestId === t._id && (
                     <div style={{ background:'var(--bg-secondary,#f8fafc)', border:'1.5px solid var(--border)', borderRadius:10, padding:'14px 16px', margin:'10px 0' }}>
                       <div style={{ fontWeight:700, fontSize:13, marginBottom:10, color:'var(--text)' }}>Edit Test</div>
-                      <div className="td-inline-edit-grid" style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px 12px' }}>
+                      <div className="td-inline-edit-grid">
                         <div style={{ gridColumn:'1/-1' }}>
                           <label style={{ fontSize:12, fontWeight:600, display:'block', marginBottom:4 }}>Title *</label>
                           <input value={editTestForm.title||''} onChange={e=>setEditTestForm(f=>({...f,title:e.target.value}))} style={{ width:'100%', padding:'8px 10px', borderRadius:7, border:'1.5px solid var(--border)', fontSize:13, boxSizing:'border-box' }}/>
@@ -616,8 +1050,8 @@ export default function TeacherDashboard() {
                   )}
 
                   <div className="td-tc-footer">
-                    <button className="btn btn-outline btn-sm" onClick={() => toggleExpand(t._id)}>
-                      {expandedTest === t._id ? <><ChevronUp size={13}/> Hide Qs</> : <><Eye size={13}/> View Qs</>}
+                    <button className="btn btn-outline btn-sm" onClick={() => setManageQModal(t)}>
+                      <BookOpen size={13}/> Manage Questions
                     </button>
                     <button className="btn btn-outline btn-sm" onClick={() => loadResults(t._id)}>
                       <BarChart2 size={13}/> Results
@@ -637,48 +1071,34 @@ export default function TeacherDashboard() {
                     )}
                   </div>
 
-                  {/* Expanded questions */}
-                  {expandedTest === t._id && (
+                  {/* Expanded questions — kept for legacy toggleExpand calls */}
+                  {expandedTest === t._id && false && (
                     <div className="td-qs-list">
-                      {(testQs[t._id] || []).length === 0 ? (
-                        <p style={{ fontSize:13, color:"var(--text-muted)", padding:"12px 0" }}>No questions added yet.</p>
-                      ) : (testQs[t._id] || []).map((q, idx) => (
-                        <div key={q._id} className="td-q-item">
-                          <div className="td-q-num">Q{idx+1}</div>
-                          <div className="td-q-body">
-                            <p className="td-q-text">{q.question}</p>
-                            <div className="td-q-opts">
-                              {q.options.map((o, j) => (
-                                <span key={j} className={`td-q-opt${o===q.answer?" td-q-opt-correct":""}`}>
-                                  {LETTERS[j]}. {o}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                          <div style={{ display:'flex', gap:2, flexShrink:0 }}>
-                            <button className="btn-icon-ghost" onClick={() => openEditQ(q)} title="Edit question">
-                              <Pencil size={12} color="var(--primary)"/>
-                            </button>
-                            <button className="btn-icon-ghost" onClick={() => handleDeleteQ(q, t._id)} title="Delete question">
-                              <Trash2 size={12} color="#dc2626"/>
-                            </button>
-                          </div>
-                        </div>
-                      ))}
 
-                      {/* ── Add question to this test ── */}
-                      {addToTestId !== t._id ? (
-                        <button
-                          className="btn btn-outline btn-sm"
-                          style={{ marginTop:10, alignSelf:'flex-start' }}
-                          onClick={() => {
-                            setAddToTestId(t._id);
-                            setAddToQText(''); setAddToOpts(['','','','']); setAddToAnsIdx(0); setAddToExpl('');
-                          }}
-                        >
-                          <Plus size={13}/> Add Question
-                        </button>
-                      ) : (
+                      {/* ── Action bar: always visible at the top ── */}
+                      {addToTestId !== t._id && !addToTestBulkMode ? (
+                        <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap', paddingBottom:10, borderBottom:'1px solid var(--border)', marginBottom:4 }}>
+                          <span style={{ fontSize:12, fontWeight:600, color:'var(--text-muted)', flex:1 }}>
+                            {(testQs[t._id]||[]).length} question{(testQs[t._id]||[]).length !== 1 ? 's' : ''}
+                          </span>
+                          <button
+                            className="btn btn-outline btn-sm"
+                            onClick={() => {
+                              setAddToTestId(t._id);
+                              setAddToQText(''); setAddToOpts(['','','','']); setAddToAnsIdx(0); setAddToExpl('');
+                            }}
+                          >
+                            <Plus size={13}/> Add Question
+                          </button>
+                          <button
+                            className="btn btn-outline btn-sm"
+                            style={{ color:'#7c3aed', borderColor:'#c4b5fd' }}
+                            onClick={() => { setAddToTestBulkMode(true); setAddToTestBulkText(''); setAddToTestId(null); }}
+                          >
+                            <Upload size={13}/> Bulk Upload
+                          </button>
+                        </div>
+                      ) : addToTestId === t._id ? (
                         <div style={{ marginTop:12, background:'var(--bg-secondary,#f8fafc)', border:'1.5px solid var(--border)', borderRadius:10, padding:'14px 16px' }}>
                           <div style={{ fontWeight:700, fontSize:13, marginBottom:12, color:'var(--text)', display:'flex', alignItems:'center', gap:6 }}>
                             <Plus size={14} color="var(--primary)"/> Add New Question
@@ -733,13 +1153,72 @@ export default function TeacherDashboard() {
                             <button className="btn btn-outline btn-sm" onClick={() => setAddToTestId(null)}>Cancel</button>
                           </div>
                         </div>
+                      ) : (
+                        /* ── Bulk Upload mode ── */
+                        <div style={{ background:'var(--bg-secondary,#f8fafc)', border:'1.5px solid var(--border)', borderRadius:10, padding:'14px 16px' }}>
+                          <div style={{ fontWeight:700, fontSize:13, marginBottom:8, color:'var(--text)', display:'flex', alignItems:'center', gap:6 }}>
+                            <Upload size={14} color="var(--primary)"/> Bulk Upload Questions
+                          </div>
+                          <p style={{ fontSize:12, color:'var(--text-muted)', marginBottom:10, lineHeight:1.5 }}>
+                            Paste JSON or CSV — same format as the Create Test bulk upload. Or pick a file below.
+                          </p>
+                          <label style={{ display:'inline-flex', alignItems:'center', gap:6, cursor:'pointer', padding:'6px 12px', borderRadius:7, border:'1.5px dashed var(--border)', fontSize:12, fontWeight:600, marginBottom:8, color:'var(--text-muted)' }}>
+                            <Upload size={12}/> Choose File (.json/.csv)
+                            <input type="file" accept=".json,.csv,.txt" style={{ display:'none' }} onChange={handleFileReadForTest}/>
+                          </label>
+                          <textarea
+                            rows={6}
+                            value={addToTestBulkText}
+                            onChange={e => setAddToTestBulkText(e.target.value)}
+                            placeholder={'Paste JSON array:\n[{"title":"Q?","options":["A","B","C","D"],"answer":"A"},…]\n\nOr CSV with columns: question, optionA, optionB, optionC, optionD, answer'}
+                            style={{ width:'100%', padding:'8px 10px', borderRadius:7, border:'1.5px solid var(--border)', fontSize:12, resize:'vertical', fontFamily:'monospace', boxSizing:'border-box', marginBottom:10 }}
+                          />
+                          <div style={{ display:'flex', gap:8 }}>
+                            <button
+                              className="btn btn-primary btn-sm"
+                              onClick={() => handleBulkUploadToTest(t._id)}
+                              disabled={addToTestBulkLoading || !addToTestBulkText.trim()}
+                            >
+                              {addToTestBulkLoading ? <><Loader2 size={13} className="spin"/> Uploading…</> : <><Upload size={13}/> Upload Questions</>}
+                            </button>
+                            <button className="btn btn-outline btn-sm" onClick={() => { setAddToTestBulkMode(false); setAddToTestBulkText(''); }}>Cancel</button>
+                          </div>
+                        </div>
                       )}
+
+                      {/* ── Questions list ── */}
+                      {(testQs[t._id] || []).length === 0 && !addToTestId && !addToTestBulkMode ? (
+                        <p style={{ fontSize:13, color:'var(--text-muted)', padding:'8px 0' }}>No questions yet. Add one above.</p>
+                      ) : (testQs[t._id] || []).map((q, idx) => (
+                        <div key={q._id} className="td-q-item">
+                          <div className="td-q-num">Q{idx+1}</div>
+                          <div className="td-q-body">
+                            <p className="td-q-text">{q.question}</p>
+                            <div className="td-q-opts">
+                              {q.options.map((o, j) => (
+                                <span key={j} className={`td-q-opt${o===q.answer?" td-q-opt-correct":""}`}>
+                                  {LETTERS[j]}. {o}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                          <div style={{ display:'flex', gap:2, flexShrink:0 }}>
+                            <button className="btn-icon-ghost" onClick={() => openEditQ(q)} title="Edit question">
+                              <Pencil size={12} color="var(--primary)"/>
+                            </button>
+                            <button className="btn-icon-ghost" onClick={() => handleDeleteQ(q, t._id)} title="Delete question">
+                              <Trash2 size={12} color="#dc2626"/>
+                            </button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
               ))}
-              <Pagination {...pgMyTests} />
             </div>
+            <Pagination {...pgMyTests} />
+            </>
           )}
         </div>
       )}
@@ -1050,17 +1529,56 @@ export default function TeacherDashboard() {
                 </div>
               </div>
 
+              {/* Sort controls */}
+              {(() => {
+                const SORTS = [
+                  { field:'score',   labelAsc:'Score ↑', labelDesc:'Score ↓', defaultDir:'desc' },
+                  { field:'date',    labelAsc:'Oldest first', labelDesc:'Newest first', defaultDir:'desc' },
+                  { field:'attempt', labelAsc:'Attempt ↑', labelDesc:'Attempt ↓', defaultDir:'asc' },
+                  { field:'name',    labelAsc:'Name A→Z', labelDesc:'Name Z→A', defaultDir:'asc' },
+                ];
+                const handleSort = (field, defaultDir) => {
+                  if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+                  else { setSortField(field); setSortDir(defaultDir); }
+                };
+                return (
+                  <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap', marginBottom:14 }}>
+                    <span style={{ fontSize:12, fontWeight:700, color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:'0.05em' }}>Sort by:</span>
+                    {SORTS.map(({ field, labelAsc, labelDesc, defaultDir }) => {
+                      const active = sortField === field;
+                      const label  = active ? (sortDir === 'asc' ? labelAsc : labelDesc) : labelDesc;
+                      return (
+                        <button key={field} onClick={() => handleSort(field, defaultDir)}
+                          style={{
+                            display:'inline-flex', alignItems:'center', gap:5,
+                            padding:'6px 13px', borderRadius:999, fontSize:12, fontWeight:700,
+                            cursor:'pointer', fontFamily:'inherit', transition:'all 0.15s',
+                            background: active ? 'var(--primary)' : 'var(--bg)',
+                            color:      active ? '#fff'           : 'var(--text-muted)',
+                            border:     active ? '1.5px solid var(--primary)' : '1.5px solid var(--border)',
+                          }}>
+                          {label}
+                          {active && <span style={{ fontSize:10, opacity:0.8 }}>{sortDir==='asc'?'▲':'▼'}</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+
               {/* Results table */}
               <div className="td-results-table-wrap">
                 <table className="td-results-table">
                   <thead>
                     <tr>
                       <th>#</th>
+                      <th>Attempt</th>
                       <th>Student</th>
                       <th>Score</th>
                       <th>Progress</th>
                       <th>Grade</th>
                       <th>Submitted</th>
+                      <th>Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1071,6 +1589,24 @@ export default function TeacherDashboard() {
                       return (
                         <tr key={r._id} className={i%2===0?"td-tr-even":""}>
                           <td className="td-rank">{pgResults.from + i}</td>
+                          <td>
+                            {(() => {
+                              const n = attemptMap[r._id] || 1;
+                              const isRetry = n > 1;
+                              return (
+                                <span style={{
+                                  display:'inline-flex', alignItems:'center', gap:4,
+                                  padding:'3px 9px', borderRadius:999, fontSize:11, fontWeight:800,
+                                  whiteSpace:'nowrap',
+                                  background: isRetry ? '#ede9fe' : '#eff6ff',
+                                  color:       isRetry ? '#6d28d9'  : '#1d4ed8',
+                                  border:`1.5px solid ${isRetry ? '#c4b5fd' : '#bfdbfe'}`,
+                                }}>
+                                  {isRetry ? '↩' : '①'} #{n}
+                                </span>
+                              );
+                            })()}
+                          </td>
                           <td>
                             <div className="td-student-cell" onClick={() => openStudentDetail(r)} style={{ cursor:'pointer' }} title="View detailed answers">
                               <div className="td-student-avatar">{r.userId?.name?.[0]?.toUpperCase()||"?"}</div>
@@ -1084,6 +1620,21 @@ export default function TeacherDashboard() {
                           <td style={{ minWidth:140 }}><ScoreBar score={r.score} total={r.total}/></td>
                           <td><span className="td-grade-badge" style={{ color:gradeColor, background:pct>=70?"#f0fdf4":pct>=40?"#fffbeb":"#fef2f2", border:`1px solid ${pct>=70?"#bbf7d0":pct>=40?"#fde68a":"#fecaca"}` }}>{grade}</span></td>
                           <td className="td-submitted">{new Date(r.submittedAt||r.createdAt).toLocaleString()}</td>
+                          <td>
+                            {r.reattemptAllowed ? (
+                              <span style={{ padding:'4px 10px', borderRadius:7, fontSize:11, fontWeight:700, border:'1.5px solid #bbf7d0', background:'#f0fdf4', color:'#059669', display:'flex', alignItems:'center', gap:4, whiteSpace:'nowrap' }}>
+                                ✓ Unlocked
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => allowReAttempt(r)}
+                                title="Allow student to re-attempt — previous score is kept"
+                                style={{ padding:'4px 10px', borderRadius:7, fontSize:11, fontWeight:700, cursor:'pointer', border:'1.5px solid #c7d2fe', background:'#eef2ff', color:'#4f46e5', display:'flex', alignItems:'center', gap:4, whiteSpace:'nowrap' }}
+                              >
+                                ↩ Re-attempt
+                              </button>
+                            )}
+                          </td>
                         </tr>
                       );
                     })}
@@ -1138,8 +1689,8 @@ export default function TeacherDashboard() {
 
       {/* ═══ Edit Question Modal ═══ */}
       {editQModal && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:9998, display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}>
-          <div style={{ background:'var(--bg-white)', borderRadius:14, padding:24, width:'100%', maxWidth:520, boxShadow:'0 20px 60px rgba(0,0,0,0.2)', maxHeight:'90vh', overflowY:'auto' }}>
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:1200, display:'flex', alignItems:'center', justifyContent:'center', padding:16, touchAction:'none', overscrollBehavior:'none' }}>
+          <div style={{ background:'var(--bg-white)', borderRadius:14, padding:24, width:'100%', maxWidth:520, boxShadow:'0 20px 60px rgba(0,0,0,0.2)', maxHeight:'90vh', overflowY:'auto', touchAction:'pan-y', overscrollBehavior:'contain' }}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
               <h3 style={{ margin:0, fontSize:16, fontWeight:700, color:'var(--text)' }}>Edit Question</h3>
               <button onClick={() => setEditQModal(null)} style={{ background:'none', border:'none', cursor:'pointer', color:'var(--text-muted)' }}><X size={18}/></button>
@@ -1180,8 +1731,8 @@ export default function TeacherDashboard() {
 
       {/* ═══ Student Detail Modal ═══ */}
       {studentDetail && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:9998, display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}>
-          <div style={{ background:'var(--bg-white)', borderRadius:14, padding:24, width:'100%', maxWidth:600, boxShadow:'0 20px 60px rgba(0,0,0,0.2)', maxHeight:'90vh', overflowY:'auto' }}>
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:1200, display:'flex', alignItems:'center', justifyContent:'center', padding:16, touchAction:'none', overscrollBehavior:'none' }}>
+          <div style={{ background:'var(--bg-white)', borderRadius:14, padding:24, width:'100%', maxWidth:600, boxShadow:'0 20px 60px rgba(0,0,0,0.2)', maxHeight:'90vh', overflowY:'auto', touchAction:'pan-y', overscrollBehavior:'contain' }}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4 }}>
               <h3 style={{ margin:0, fontSize:16, fontWeight:700, color:'var(--text)' }}>
                 {studentDetail.result.userId?.name || 'Student'}'s Answers
@@ -1241,18 +1792,26 @@ export default function TeacherDashboard() {
                   ) : (
                     <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
                       {studentDetail.questions.map((q, idx) => {
-                        const given = r.answers?.[q._id.toString()];
+                        const qId = q._id.toString();
+                        const given = r.answers?.[qId];
                         const isCorrect = given === q.answer;
                         const rowBg = isCorrect ? '#f0fdf4' : given ? '#fef2f2' : '#fffbeb';
                         const rowBorder = isCorrect ? '#bbf7d0' : given ? '#fecaca' : '#fde68a';
+                        const timings = r.questionTimings;
+                        const qSecs = timings instanceof Map ? timings.get(qId) : (timings?.[qId] ?? null);
                         return (
                           <div key={q._id} style={{ border:`1.5px solid ${rowBorder}`, background:rowBg, borderRadius:10, padding:'12px 14px' }}>
                             <div style={{ display:'flex', gap:8, alignItems:'flex-start', marginBottom:8 }}>
                               <span style={{ fontWeight:800, fontSize:12, color:'var(--text-muted)', flexShrink:0 }}>Q{idx+1}</span>
                               <span style={{ fontSize:13, fontWeight:600, color:'var(--text)', lineHeight:1.4 }}>{q.question}</span>
-                              <span style={{ marginLeft:'auto', flexShrink:0 }}>
+                              <div style={{ marginLeft:'auto', flexShrink:0, display:'flex', flexDirection:'column', alignItems:'flex-end', gap:4 }}>
                                 {isCorrect ? <CheckCircle size={16} color="#059669"/> : given ? <XCircle size={16} color="#dc2626"/> : <AlertCircle size={16} color="#d97706"/>}
-                              </span>
+                                {qSecs != null && (
+                                  <span style={{ display:'flex', alignItems:'center', gap:3, fontSize:11, color:'var(--text-muted)', background:'rgba(0,0,0,0.05)', borderRadius:5, padding:'2px 7px', fontVariantNumeric:'tabular-nums' }}>
+                                    <Timer size={10}/> {fmt(qSecs)}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                             <div style={{ fontSize:12, display:'flex', flexDirection:'column', gap:4 }}>
                               <div style={{ color: isCorrect?'#059669':'#dc2626', fontWeight:600 }}>
@@ -1276,10 +1835,19 @@ export default function TeacherDashboard() {
         </div>
       )}
 
+      {manageQModal && (
+        <TeacherQuestionsModal
+          test={manageQModal}
+          onClose={() => setManageQModal(null)}
+          toast={toast}
+        />
+      )}
+
       {confirmDlg && (
         <ConfirmModal
           message={confirmDlg.msg || 'Delete this test and all its questions/results? This cannot be undone.'}
-          type="danger"
+          type={confirmDlg.type || 'danger'}
+          confirmLabel={confirmDlg.confirmLabel}
           onConfirm={() => {
             if (confirmDlg.onConfirm) confirmDlg.onConfirm();
             else doDeleteTest(confirmDlg.id);

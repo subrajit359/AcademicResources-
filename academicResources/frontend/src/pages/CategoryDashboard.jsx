@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate, Navigate } from 'react-router-dom';
-import { BookOpen, UploadCloud, ClipboardList, Brain, ChevronLeft, ArrowRight } from 'lucide-react';
+import { BookOpen, UploadCloud, ClipboardList, Brain, ChevronLeft, ArrowRight, Hash, ArrowRightCircle } from 'lucide-react';
 
 const CARDS = (cat) => [
   { title: 'Resources',       desc: `Browse ${cat} notes, PDFs and materials`,       Icon: BookOpen,      path: '/resources',     color: '#2563eb', bg: '#eff6ff' },
@@ -12,10 +12,23 @@ const CARDS = (cat) => [
 function CategoryDashboard() {
   const navigate = useNavigate();
   const selectedCategory = localStorage.getItem('selectedCategory');
+  const [codeInput, setCodeInput] = useState('');
+  const [codeErr, setCodeErr]     = useState('');
 
   if (!selectedCategory) {
     return <Navigate to="/choose-category" replace />;
   }
+
+  const handleCodeSubmit = (e) => {
+    e.preventDefault();
+    const val = codeInput.trim();
+    if (!val) { setCodeErr('Please enter a test code or paste a link'); return; }
+    setCodeErr('');
+    // Support full share-link URLs as well as bare codes
+    const match = val.match(/take-test\/([^/?#]+)/);
+    const code  = match ? match[1] : val;
+    navigate(`/take-test/${code}`);
+  };
 
   return (
     <div>
@@ -47,6 +60,29 @@ function CategoryDashboard() {
               </div>
             </div>
           ))}
+        </div>
+
+        {/* ── Enter test code / link ── */}
+        <div className="cd-code-banner">
+          <div className="cd-code-banner-icon">
+            <Hash size={22} color="#fff" />
+          </div>
+          <div className="cd-code-banner-body">
+            <div className="cd-code-banner-title">Enter Test Code or Link</div>
+            <div className="cd-code-banner-desc">Have a code or share-link from your teacher? Paste it here.</div>
+            <form className="cd-code-form" onSubmit={handleCodeSubmit}>
+              <input
+                className="cd-code-input"
+                value={codeInput}
+                onChange={e => { setCodeInput(e.target.value); setCodeErr(''); }}
+                placeholder="e.g. MATH-2024-XYZ or paste a link"
+              />
+              <button type="submit" className="cd-code-btn">
+                Go <ArrowRightCircle size={16} />
+              </button>
+            </form>
+            {codeErr && <p className="cd-code-err">{codeErr}</p>}
+          </div>
         </div>
       </div>
     </div>

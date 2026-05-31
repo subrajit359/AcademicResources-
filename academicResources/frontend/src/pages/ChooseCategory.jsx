@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Monitor, Shield, Flag, Train, ShieldCheck, Heart, Plus, ArrowRight, Sparkles, GraduationCap } from 'lucide-react';
-import { getCategories } from '../utils/categoryStore';
+import { getCategories, addCategory } from '../utils/categoryStore';
+import { API_URL } from '../config';
 
 const DEFAULT_ICON_MAP = {
   'CSE':      { Icon: Monitor,     gradient: 'linear-gradient(135deg,#dbeafe,#bfdbfe)', iconColor: '#2563eb', border: '#93c5fd' },
@@ -27,12 +28,32 @@ function ChooseCategory() {
   const [categories, setCategories] = useState([]);
 
   useEffect(() => {
-    setCategories(getCategories());
+    const local = getCategories();
+    setCategories(local);
+    // Also pull categories from actual published tests so new custom
+    // categories created by admin/teachers are visible to all students.
+    fetch(`${API_URL}/api/admin/tests`)
+      .then(r => r.json())
+      .then(d => {
+        if (!Array.isArray(d)) return;
+        const fromTests = d
+          .filter(t => t.category && (!t.teacherId || t.publishStatus === 'approved'))
+          .map(t => t.category);
+        const unique = [...new Set(fromTests)];
+        let updated = local;
+        unique.forEach(cat => {
+          if (!updated.map(c => c.toLowerCase()).includes(cat.toLowerCase())) {
+            updated = addCategory(cat);
+          }
+        });
+        setCategories([...new Set(updated)]);
+      })
+      .catch(() => {});
   }, []);
 
   const handleSelect = (name) => {
     localStorage.setItem('selectedCategory', name);
-    navigate('/');
+    navigate('/category-dashboard');
   };
 
   return (

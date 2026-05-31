@@ -6,10 +6,10 @@ import StudentHome from './StudentHome';
 import {
   BookOpen, CheckCircle, Users, Brain, Folder, Bell,
   ArrowRight, GraduationCap, LayoutDashboard, Upload,
-  Download, Search, Sparkles,
+  Download, Search, Sparkles, Hash, Trophy,
 } from 'lucide-react';
 import heroVideo from '../assets/hero-bg.mp4';
-import heroImage from '../assets/hero-bg.jpg';
+import heroImage from '../assets/hero-bg.webp';
 
 const features = [
   { Icon: BookOpen,    title: 'Vast Resource Library',  desc: 'Access thousands of notes, question papers, books and tutorials across multiple subjects and categories.' },
@@ -130,6 +130,30 @@ function Home() {
                   </Link>
                 </>
               )}
+            </motion.div>
+
+            {/* Check Results chip — visually distinct from hero buttons */}
+            <motion.div variants={heroItem} style={{ marginTop: 10 }}>
+              <Link
+                to="/leaderboard"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 8,
+                  background: 'rgba(245,158,11,0.18)',
+                  border: '1.5px solid rgba(245,158,11,0.55)',
+                  color: '#fef3c7',
+                  borderRadius: 999, padding: '8px 20px',
+                  fontSize: 14, fontWeight: 700,
+                  textDecoration: 'none',
+                  backdropFilter: 'blur(6px)',
+                  transition: 'background 0.2s, border-color 0.2s',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(245,158,11,0.30)'; e.currentTarget.style.borderColor = 'rgba(245,158,11,0.8)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(245,158,11,0.18)'; e.currentTarget.style.borderColor = 'rgba(245,158,11,0.55)'; }}
+              >
+                <Trophy size={15} color="#fbbf24" />
+                Check Results by Code or Link
+                <ArrowRight size={14} color="#fbbf24" />
+              </Link>
             </motion.div>
 
             <motion.div className="hero-stats" variants={heroItem}>

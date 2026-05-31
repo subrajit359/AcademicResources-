@@ -60,6 +60,22 @@ function PreviewModal({ resource, onClose, onDownload, downloading }) {
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
 
+  // Lock background scroll while open (iOS-safe)
+  useEffect(() => {
+    const y = window.scrollY;
+    document.body.style.overflow = 'hidden';
+    document.body.style.position = 'fixed';
+    document.body.style.top = `-${y}px`;
+    document.body.style.width = '100%';
+    return () => {
+      document.body.style.position = '';
+      document.body.style.top = '';
+      document.body.style.width = '';
+      document.body.style.overflow = '';
+      window.scrollTo(0, y);
+    };
+  }, []);
+
   return (
     <div
       onClick={handleBackdrop}
@@ -68,8 +84,9 @@ function PreviewModal({ resource, onClose, onDownload, downloading }) {
         background: 'rgba(0,0,0,0.65)',
         backdropFilter: 'blur(4px)',
         zIndex: 1000,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: '20px',
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+        padding: '80px 20px 20px',
+        overflowY: 'auto',
       }}
     >
       <div
@@ -78,7 +95,7 @@ function PreviewModal({ resource, onClose, onDownload, downloading }) {
           borderRadius: 16,
           width: '100%',
           maxWidth: 860,
-          maxHeight: '90vh',
+          maxHeight: 'calc(100vh - 116px)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
@@ -128,7 +145,7 @@ function PreviewModal({ resource, onClose, onDownload, downloading }) {
         <div style={{ flex: 1, overflow: 'auto', background: '#f8fafc' }}>
           {isPDF && (
             <iframe
-              src={resource.fileUrl}
+              src={`https://docs.google.com/viewer?url=${encodeURIComponent(resource.fileUrl)}&embedded=true`}
               title={resource.title}
               style={{ width: '100%', height: '100%', minHeight: 520, border: 'none' }}
             />
@@ -228,8 +245,10 @@ function Resources() {
         fetch(`${API_URL}/api/resources?category=${encodeURIComponent(selectedCategory)}`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }),
       ]);
       if (fRes.ok) setFolders(await fRes.json());
-      if (rRes.ok) setResources(await rRes.json());
-      else setError('Failed to load resources');
+      if (rRes.ok) {
+        const d = await rRes.json();
+        setResources(Array.isArray(d) ? d : (d.resources || []));
+      } else setError('Failed to load resources');
     } catch (err) { setError('Connection error: ' + err.message); }
     finally { setLoading(false); }
   };
@@ -291,12 +310,18 @@ function Resources() {
     }
   };
 
+  /* Increment view count (fire-and-forget) */
+  const trackView = (id) => {
+    fetch(`${API_URL}/api/resources/${id}/view`, { method: 'POST' }).catch(() => {});
+  };
+
   /* Single-click download — fetches as blob so the browser saves directly */
   const handleDownload = async (resource) => {
     if (!user) { navigate('/login'); return; }
     if (downloading[resource._id]) return;
 
     setDownloading(prev => ({ ...prev, [resource._id]: true }));
+    setResources(prev => prev.map(r => r._id === resource._id ? { ...r, downloads: (r.downloads ?? 0) + 1 } : r));
     try {
       // Get the Cloudinary fl_attachment URL from backend
       const res  = await fetch(`${API_URL}/api/resources/download/${resource._id}`);
@@ -592,12 +617,22 @@ function Resources() {
                     <div className="resource-size">{(resource.fileSize / 1024).toFixed(1)} KB</div>
                   )}
 
+                  {/* View / download counts */}
+                  <div className="rc-stats">
+                    <span className="rc-stat"><Eye size={11} /> {resource.views ?? 0}</span>
+                    <span className="rc-stat"><Download size={11} /> {resource.downloads ?? 0}</span>
+                  </div>
+
                   {/* Action buttons */}
                   <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
                     <button
                       className="btn btn-outline btn-sm"
                       style={{ flex: 1 }}
-                      onClick={() => setPreviewResource(resource)}
+                      onClick={() => {
+                        trackView(resource._id);
+                        setResources(prev => prev.map(r => r._id === resource._id ? { ...r, views: (r.views ?? 0) + 1 } : r));
+                        setPreviewResource(resource);
+                      }}
                     >
                       <Eye size={13} /> Preview
                     </button>

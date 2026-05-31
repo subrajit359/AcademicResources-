@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import CustomSelect from '../components/CustomSelect';
+import { usePagination } from '../hooks/usePagination';
+import Pagination from '../components/Pagination';
 import {
   Ban, Trash2, Mail, X, Download, ExternalLink, FileText,
   Image, Film, AlertTriangle, Info, GraduationCap, BookOpen,
@@ -42,15 +44,19 @@ function ModalShell({ width = 480, onClick, children, animate = true }) {
   );
 }
 
-function ModalHeader({ title, subtitle, accent = '#6366f1', onClose }) {
+function ModalHeader({ title, subtitle, accent = '#6366f1', onClose, children }) {
   return (
     <div className="md-header" style={{ '--accent': accent }}>
       <div className="md-header-bar" style={{ background: accent }} />
       <div className="md-header-content">
-        <div>
-          <div className="md-header-title">{title}</div>
-          {subtitle && <div className="md-header-sub">{subtitle}</div>}
-        </div>
+        {children ? (
+          <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
+        ) : (
+          <div>
+            <div className="md-header-title">{title}</div>
+            {subtitle && <div className="md-header-sub">{subtitle}</div>}
+          </div>
+        )}
         <button className="md-close" onClick={onClose} aria-label="Close">
           <X size={16} />
         </button>
@@ -179,7 +185,7 @@ const CFM_META = {
   info:    { Icon: Info,          color: '#2563eb', iconBg: '#dbeafe', border: '#bfdbfe', title: 'Confirm Action',  confirmLabel: 'OK',      btnCls: 'md-btn-primary'  },
 };
 
-export function ConfirmModal({ message, title, type = 'danger', onConfirm, onCancel }) {
+export function ConfirmModal({ message, title, type = 'danger', confirmLabel: customConfirmLabel, onConfirm, onCancel }) {
   useScrollLock();
   const [phase, setPhase] = useState('enter');
   useEffect(() => { const id = requestAnimationFrame(() => setPhase('idle')); return () => cancelAnimationFrame(id); }, []);
@@ -206,7 +212,7 @@ export function ConfirmModal({ message, title, type = 'danger', onConfirm, onCan
         <p className="cfm2-message">{message}</p>
         <div className="cfm2-actions">
           <button className="md-btn md-btn-ghost cfm2-cancel" onClick={() => exit(onCancel)}>Cancel</button>
-          <button className={`md-btn ${m.btnCls}`} onClick={() => exit(onConfirm)}>{m.confirmLabel}</button>
+          <button className={`md-btn ${m.btnCls}`} onClick={() => exit(onConfirm)}>{customConfirmLabel || m.confirmLabel}</button>
         </div>
       </div>
     </div>
@@ -636,16 +642,23 @@ export function EditFolderModal({ folder, onSave, onClose }) {
 export function QuestionsModal({ test, onClose, API_URL, toast }) {
   useScrollLock();
   const [questions, setQuestions] = useState([]);
-  const [loading,   setLoading]   = useState(true);
-  const [q,         setQ]         = useState('');
-  const [opts,      setOpts]      = useState(['','','','']);
-  const [ans,       setAns]       = useState('');
-  const [adding,    setAdding]    = useState(false);
-  const [editingQ,  setEditingQ]  = useState(null);
-  const [editText,  setEditText]  = useState('');
-  const [editOpts,  setEditOpts]  = useState(['','','','']);
-  const [editAns,   setEditAns]   = useState('');
-  const [saving,    setSaving]    = useState(false);
+  const pgQ = usePagination(questions, 5);
+  const [loading,       setLoading]       = useState(true);
+  const [q,             setQ]             = useState('');
+  const [opts,          setOpts]          = useState(['','','','']);
+  const [ans,           setAns]           = useState('');
+  const [adding,        setAdding]        = useState(false);
+  const [editingQ,      setEditingQ]      = useState(null);
+  const [editText,      setEditText]      = useState('');
+  const [editOpts,      setEditOpts]      = useState(['','','','']);
+  const [editAns,       setEditAns]       = useState('');
+  const [saving,        setSaving]        = useState(false);
+  const [addTab,        setAddTab]        = useState('single');
+  const [bulkText,      setBulkText]      = useState('');
+  const [bulkPreview,   setBulkPreview]   = useState([]);
+  const [bulkError,     setBulkError]     = useState('');
+  const [bulkSubmitting,setBulkSubmitting]= useState(false);
+  const bulkFileRef = useRef(null);
 
   const token = localStorage.getItem('token');
   const authHeaders = { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
@@ -713,6 +726,86 @@ export function QuestionsModal({ test, onClose, API_URL, toast }) {
     setSaving(false);
   };
 
+  const parseBulkJSON = (text) => {
+    try {
+      const parsed = JSON.parse(text);
+      const arr = Array.isArray(parsed) ? parsed : [parsed];
+      const result = arr.map((item, i) => {
+        if (!item.title && !item.question) throw new Error(`Item ${i + 1}: missing "title" or "question" field`);
+        if (!Array.isArray(item.options) || item.options.length < 2) throw new Error(`Item ${i + 1}: "options" must be array with ≥ 2 items`);
+        if (!item.answer) throw new Error(`Item ${i + 1}: missing "answer" field`);
+        return { title: item.title || item.question, options: item.options, answer: item.answer };
+      });
+      return { ok: true, questions: result };
+    } catch (e) { return { ok: false, error: e.message }; }
+  };
+
+  const parseBulkCSV = (text) => {
+    try {
+      const lines = text.trim().split('\n').filter(Boolean);
+      if (lines.length < 2) throw new Error('CSV needs a header row + at least one data row');
+      const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/"/g, ''));
+      const qIdx = headers.includes('question') ? headers.indexOf('question') : headers.indexOf('title');
+      const aIdx = headers.indexOf('answer');
+      const oIdxs = ['optiona','optionb','optionc','optiond','option_a','option_b','option_c','option_d']
+        .map(h => headers.indexOf(h)).filter(i => i !== -1);
+      if (qIdx === -1) throw new Error('CSV must have a "question" or "title" column');
+      if (aIdx === -1) throw new Error('CSV must have an "answer" column');
+      if (oIdxs.length < 2) throw new Error('CSV must have at least OptionA and OptionB columns');
+      const questions = lines.slice(1).map((line, i) => {
+        const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+        const options = oIdxs.map(oi => cols[oi] || '').filter(Boolean);
+        if (!cols[qIdx]) throw new Error(`Row ${i + 2}: empty question`);
+        if (!cols[aIdx]) throw new Error(`Row ${i + 2}: empty answer`);
+        return { title: cols[qIdx], options, answer: cols[aIdx] };
+      });
+      return { ok: true, questions };
+    } catch (e) { return { ok: false, error: e.message }; }
+  };
+
+  const handleBulkTextChange = (text) => {
+    setBulkText(text);
+    if (!text.trim()) { setBulkPreview([]); setBulkError(''); return; }
+    const trimmed = text.trim();
+    const result = (trimmed.startsWith('[') || trimmed.startsWith('{')) ? parseBulkJSON(trimmed) : parseBulkCSV(trimmed);
+    if (result.ok) { setBulkPreview(result.questions); setBulkError(''); }
+    else { setBulkPreview([]); setBulkError(result.error); }
+  };
+
+  const handleBulkFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target.result;
+      setBulkText(text);
+      const isCSV = file.name.endsWith('.csv');
+      const result = isCSV ? parseBulkCSV(text) : parseBulkJSON(text);
+      if (result.ok) { setBulkPreview(result.questions); setBulkError(''); }
+      else { setBulkPreview([]); setBulkError(result.error); }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const submitBulk = async () => {
+    if (bulkPreview.length === 0) { toast.warning('No valid questions to upload'); return; }
+    setBulkSubmitting(true);
+    let ok = 0;
+    for (const item of bulkPreview) {
+      const res = await fetch(`${API_URL}/api/admin/tests/${test._id}/question`, {
+        method: 'POST', headers: authHeaders, body: JSON.stringify(item),
+      });
+      if (res.ok) {
+        const newQ = await res.json();
+        setQuestions(prev => [...prev, newQ]);
+        ok++;
+      }
+    }
+    toast.success(`${ok} of ${bulkPreview.length} questions uploaded!`);
+    setBulkText(''); setBulkPreview([]); setBulkError(''); setBulkSubmitting(false);
+  };
+
   return (
     <Overlay onClick={onClose}>
       <ModalShell width={680} onClick={e => e.stopPropagation()}>
@@ -733,12 +826,14 @@ export function QuestionsModal({ test, onClose, API_URL, toast }) {
             </div>
           ) : (
             <div className="qm-list">
-              {questions.map((qu, i) => (
+              {pgQ.slice.map((qu, i) => {
+                const globalNum = (pgQ.page - 1) * 5 + i + 1;
+                return (
                 <div key={qu._id} className="qm-item">
                   {editingQ === qu._id ? (
                     <div className="qm-edit-form">
                       <div className="qm-edit-header">
-                        <span className="qm-item-num">Q{i + 1}</span>
+                        <span className="qm-item-num">Q{globalNum}</span>
                         <span style={{ fontSize: 12, color: '#6366f1', fontWeight: 600 }}>Editing</span>
                       </div>
                       <MdField label="Question Text">
@@ -773,7 +868,7 @@ export function QuestionsModal({ test, onClose, API_URL, toast }) {
                     </div>
                   ) : (
                     <>
-                      <div className="qm-item-num">Q{i + 1}</div>
+                      <div className="qm-item-num">Q{globalNum}</div>
                       <div className="qm-item-content">
                         <div className="qm-item-text">{qu.title || qu.question}</div>
                         <div className="qm-item-opts">
@@ -796,39 +891,151 @@ export function QuestionsModal({ test, onClose, API_URL, toast }) {
                     </>
                   )}
                 </div>
-              ))}
+              ); })}
+              <Pagination {...pgQ} />
             </div>
           )}
 
-          {/* Add question form */}
+          {/* Add / Bulk upload tabs */}
           <div className="qm-add-section">
-            <div className="qm-add-title"><Plus size={14} color="#6366f1" /> Add New Question</div>
-            <MdField label="Question Text">
-              <MdTextarea rows={2} value={q} onChange={e => setQ(e.target.value)} placeholder="Enter the question…" />
-            </MdField>
-            <div className="md-grid-2">
-              {opts.map((o, i) => (
-                <div key={i} className="qm-opt-input-wrap">
-                  <div className="qm-opt-letter">{String.fromCharCode(65 + i)}</div>
-                  <MdInput
-                    value={o}
-                    onChange={e => setOpts(opts.map((x, j) => j === i ? e.target.value : x))}
-                    placeholder={`Option ${String.fromCharCode(65 + i)}`}
-                  />
-                </div>
+            {/* Tab switcher */}
+            <div style={{ display: 'flex', gap: 0, marginBottom: 16, background: '#f1f5f9', borderRadius: 8, padding: 3 }}>
+              {['single', 'bulk'].map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setAddTab(tab)}
+                  style={{
+                    flex: 1, padding: '7px 12px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                    fontWeight: 600, fontSize: 13, transition: 'all 0.15s',
+                    background: addTab === tab ? '#fff' : 'transparent',
+                    color: addTab === tab ? '#6366f1' : '#64748b',
+                    boxShadow: addTab === tab ? '0 1px 4px rgba(0,0,0,0.1)' : 'none',
+                  }}
+                >
+                  {tab === 'single' ? <><Plus size={12} style={{ display:'inline',verticalAlign:'middle',marginRight:4 }} />Single Question</> : <><ListChecks size={12} style={{ display:'inline',verticalAlign:'middle',marginRight:4 }} />Bulk Upload</>}
+                </button>
               ))}
             </div>
-            <MdField label="Correct Answer">
-              <MdSelect value={ans} onChange={e => setAns(e.target.value)}>
-                <option value="">— Select correct option —</option>
-                {opts.filter(Boolean).map((o, i) => (
-                  <option key={i} value={o}>{String.fromCharCode(65 + i)}: {o}</option>
-                ))}
-              </MdSelect>
-            </MdField>
-            <button className="md-btn md-btn-primary" onClick={handleAdd} disabled={adding || !q.trim()}>
-              {adding ? <><Loader2 size={14} className="spin" /> Adding…</> : <><Plus size={14} /> Add Question</>}
-            </button>
+
+            {addTab === 'single' && (
+              <>
+                <div className="qm-add-title"><Plus size={14} color="#6366f1" /> Add New Question</div>
+                <MdField label="Question Text">
+                  <MdTextarea rows={2} value={q} onChange={e => setQ(e.target.value)} placeholder="Enter the question…" />
+                </MdField>
+                <div className="md-grid-2">
+                  {opts.map((o, i) => (
+                    <div key={i} className="qm-opt-input-wrap">
+                      <div className="qm-opt-letter">{String.fromCharCode(65 + i)}</div>
+                      <MdInput
+                        value={o}
+                        onChange={e => setOpts(opts.map((x, j) => j === i ? e.target.value : x))}
+                        placeholder={`Option ${String.fromCharCode(65 + i)}`}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <MdField label="Correct Answer">
+                  <MdSelect value={ans} onChange={e => setAns(e.target.value)}>
+                    <option value="">— Select correct option —</option>
+                    {opts.filter(Boolean).map((o, i) => (
+                      <option key={i} value={o}>{String.fromCharCode(65 + i)}: {o}</option>
+                    ))}
+                  </MdSelect>
+                </MdField>
+                <button className="md-btn md-btn-primary" onClick={handleAdd} disabled={adding || !q.trim()}>
+                  {adding ? <><Loader2 size={14} className="spin" /> Adding…</> : <><Plus size={14} /> Add Question</>}
+                </button>
+              </>
+            )}
+
+            {addTab === 'bulk' && (
+              <>
+                <div className="qm-add-title"><ListChecks size={14} color="#6366f1" /> Bulk Upload Questions</div>
+
+                {/* Format hint */}
+                <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 12, color: '#475569', lineHeight: 1.6 }}>
+                  <strong style={{ color: '#334155' }}>CSV format</strong> (with header row):<br/>
+                  <code style={{ fontFamily: 'monospace', fontSize: 11, color: '#6366f1' }}>question,optionA,optionB,optionC,optionD,answer</code>
+                  <br/><br/>
+                  <strong style={{ color: '#334155' }}>JSON format</strong>:<br/>
+                  <code style={{ fontFamily: 'monospace', fontSize: 11, color: '#6366f1' }}>{`[{"title":"Q?","options":["A","B","C","D"],"answer":"A"}]`}</code>
+                </div>
+
+                {/* File upload */}
+                <input ref={bulkFileRef} type="file" accept=".csv,.json" onChange={handleBulkFile} style={{ display: 'none' }} />
+                <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                  <button
+                    className="md-btn md-btn-outline"
+                    onClick={() => bulkFileRef.current?.click()}
+                    style={{ fontSize: 12 }}
+                  >
+                    <Plus size={13} /> Upload CSV / JSON File
+                  </button>
+                  {bulkText && (
+                    <button
+                      className="md-btn md-btn-ghost"
+                      onClick={() => { setBulkText(''); setBulkPreview([]); setBulkError(''); }}
+                      style={{ fontSize: 12 }}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+
+                {/* Paste area */}
+                <MdField label="Or paste CSV / JSON content">
+                  <MdTextarea
+                    rows={5}
+                    value={bulkText}
+                    onChange={e => handleBulkTextChange(e.target.value)}
+                    placeholder={'question,optionA,optionB,optionC,optionD,answer\nWhat is 2+2?,1,2,3,4,4\n…'}
+                    style={{ fontFamily: 'monospace', fontSize: 12 }}
+                  />
+                </MdField>
+
+                {/* Error */}
+                {bulkError && (
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 7, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 12px', marginBottom: 10, fontSize: 12, color: '#dc2626' }}>
+                    <AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 1 }} /> {bulkError}
+                  </div>
+                )}
+
+                {/* Preview */}
+                {bulkPreview.length > 0 && (
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#059669', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Check size={13} /> {bulkPreview.length} question{bulkPreview.length !== 1 ? 's' : ''} ready to upload
+                    </div>
+                    <div style={{ maxHeight: 180, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {bulkPreview.map((item, i) => (
+                        <div key={i} style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 7, padding: '7px 11px', fontSize: 12 }}>
+                          <div style={{ fontWeight: 600, color: '#334155', marginBottom: 3 }}>{i + 1}. {item.title}</div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 10px', color: '#64748b' }}>
+                            {item.options.map((o, j) => (
+                              <span key={j} style={{ color: o === item.answer ? '#059669' : '#64748b', fontWeight: o === item.answer ? 700 : 400 }}>
+                                {String.fromCharCode(65 + j)}. {o}{o === item.answer ? ' ✓' : ''}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  className="md-btn md-btn-primary"
+                  onClick={submitBulk}
+                  disabled={bulkSubmitting || bulkPreview.length === 0}
+                >
+                  {bulkSubmitting
+                    ? <><Loader2 size={14} className="spin" /> Uploading…</>
+                    : <><ListChecks size={14} /> Upload {bulkPreview.length > 0 ? `${bulkPreview.length} Questions` : 'Questions'}</>
+                  }
+                </button>
+              </>
+            )}
           </div>
         </ModalBody>
         <ModalFooter>
@@ -914,6 +1121,7 @@ const DIFF_COLORS = {
 export function AiQuestionsModal({ test, onClose }) {
   useScrollLock();
   const questions = test.questions || [];
+  const pgQ = usePagination(questions, 5);
   const diff = DIFF_COLORS[test.difficulty] || DIFF_COLORS.medium;
 
   return (
@@ -935,7 +1143,7 @@ export function AiQuestionsModal({ test, onClose }) {
           </div>
         </ModalHeader>
 
-        <ModalBody>
+        <ModalBody scrollable>
           {/* Meta strip */}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 600, padding: '4px 10px', borderRadius: 20, background: diff.bg, color: diff.color, border: `1px solid ${diff.border}` }}>
@@ -963,10 +1171,12 @@ export function AiQuestionsModal({ test, onClose }) {
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {questions.map((q, idx) => (
+              {pgQ.slice.map((q, idx) => {
+                const globalIdx = (pgQ.page - 1) * 5 + idx + 1;
+                return (
                 <div key={idx} style={{ background: 'var(--bg-white,#fff)', border: '1.5px solid var(--border,#e5e7eb)', borderRadius: 12, padding: '14px 16px' }}>
                   <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
-                    <span style={{ flexShrink: 0, fontWeight: 700, fontSize: 12, color: '#7c3aed', background: '#f5f3ff', border: '1px solid #e9d5ff', borderRadius: 6, padding: '2px 8px', lineHeight: '20px' }}>Q{idx + 1}</span>
+                    <span style={{ flexShrink: 0, fontWeight: 700, fontSize: 12, color: '#7c3aed', background: '#f5f3ff', border: '1px solid #e9d5ff', borderRadius: 6, padding: '2px 8px', lineHeight: '20px' }}>Q{globalIdx}</span>
                     <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: 'var(--text,#1e293b)', lineHeight: 1.5 }}>{q.question}</p>
                   </div>
 
@@ -995,12 +1205,14 @@ export function AiQuestionsModal({ test, onClose }) {
                     </div>
                   )}
                 </div>
-              ))}
+              ); })}
+              <Pagination {...pgQ} />
             </div>
           )}
         </ModalBody>
 
         <ModalFooter>
+          <span className="md-footer-count">{questions.length} question{questions.length !== 1 ? 's' : ''}</span>
           <button className="md-btn md-btn-ghost" onClick={onClose}>Close</button>
         </ModalFooter>
       </ModalShell>

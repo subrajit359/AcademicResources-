@@ -57,7 +57,7 @@ router.post('/send-otp', async (req, res) => {
     res.json({ message: 'OTP sent to your email. Valid for 10 minutes.' });
   } catch (error) {
     console.error('Send OTP error:', error);
-    res.status(500).json({ message: 'Failed to send OTP', error: error.message });
+    res.status(500).json({ message: 'Failed to send OTP' });
   }
 });
 
@@ -98,7 +98,7 @@ router.post('/verify-otp', async (req, res) => {
     });
   } catch (error) {
     console.error('Verify OTP error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -128,7 +128,7 @@ router.post('/google', async (req, res) => {
       if (!user.googleId) {
         user.googleId = googleId;
         if (!user.avatar && picture) user.avatar = picture;
-        await user.save();
+        await user.save({ validateModifiedOnly: true });
       }
     } else {
       isNewUser = true;
@@ -151,7 +151,7 @@ router.post('/google', async (req, res) => {
     });
   } catch (err) {
     console.error('Google auth error:', err.message);
-    res.status(401).json({ message: 'Google sign-in failed. Please try again.', error: err.message });
+    res.status(401).json({ message: 'Google sign-in failed. Please try again.' });
   }
 });
 
@@ -179,7 +179,7 @@ router.post('/complete-onboarding', async (req, res) => {
     if (password && password.length >= 6) {
       user.password = password;
     }
-    await user.save();
+    await user.save({ validateModifiedOnly: true });
 
     const newToken = jwt.sign({ id: user._id, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
     res.json({
@@ -187,7 +187,7 @@ router.post('/complete-onboarding', async (req, res) => {
       user: { id: user._id, name: user.name, email: user.email, role: user.role, avatar: user.avatar, bio: user.bio },
     });
   } catch (err) {
-    res.status(401).json({ message: 'Failed to complete setup', error: err.message });
+    res.status(401).json({ message: 'Failed to complete setup' });
   }
 });
 
@@ -237,7 +237,7 @@ router.post('/login', async (req, res) => {
     });
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -290,7 +290,7 @@ router.post('/reset-password', async (req, res) => {
     if (!user) return res.status(404).json({ message: 'Account not found' });
 
     user.password = password;
-    await user.save();
+    await user.save({ validateModifiedOnly: true });
     await PasswordResetToken.findOneAndDelete({ token });
 
     res.json({ message: 'Password updated successfully. You can now sign in.' });

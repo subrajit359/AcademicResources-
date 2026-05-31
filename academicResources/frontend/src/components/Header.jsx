@@ -5,7 +5,7 @@ import logo from '../assets/logo.png';
 import { subscribeToPush, unsubscribeFromPush, checkPushSubscription } from '../utils/pushNotification';
 import { loadNotifications, saveNotifications, TTL_MS } from '../utils/notifications';
 import {
-  Home, LayoutDashboard, ClipboardList, Shield, Mail,
+  Home, LayoutDashboard, ClipboardList, Shield, Mail, MessageSquare,
   X, Bell, BellOff, Loader2, AlertCircle, Settings,
   LogOut, User, ChevronDown, Menu, BookOpen, Upload, Folder, Globe,
 } from 'lucide-react';
@@ -136,8 +136,20 @@ function Header() {
   useEffect(() => { setMobileOpen(false); setProfileOpen(false); }, [location.pathname]);
 
   useEffect(() => {
-    document.body.style.overflow = mobileOpen ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
+    if (mobileOpen) {
+      const y = window.scrollY;
+      document.body.style.overflow = 'hidden';
+      document.body.style.position = 'fixed';
+      document.body.style.top = `-${y}px`;
+      document.body.style.width = '100%';
+      return () => {
+        document.body.style.position = '';
+        document.body.style.top = '';
+        document.body.style.width = '';
+        document.body.style.overflow = '';
+        window.scrollTo(0, y);
+      };
+    }
   }, [mobileOpen]);
 
   const dismissPushBanner = () => {
@@ -177,12 +189,13 @@ function Header() {
     { to: isAdmin ? '/admin/overview' : isTeacher ? '/teacher' : '/', label: 'Home', Icon: Home, show: true },
     { to: '/category-dashboard', label: 'Dashboard',  Icon: LayoutDashboard, show: !!user && !isAdmin && !isTeacher },
     { to: '/resources',          label: 'Resources',  Icon: BookOpen,        show: !isAdmin, mobile: isTeacher ? false : undefined },
-    { to: '/official-tests',     label: 'Official Tests', Icon: Globe,       show: !!user && !isAdmin },
+    { to: '/test',     label: 'Practice Tests', Icon: Globe,       show: !!user && !isAdmin },
     { to: '/teacher/tests',      label: 'My Tests',   Icon: ClipboardList,   show: isTeacher && !isAdmin, mobile: false },
     { to: '/admin/pending',      label: 'Approvals',  Icon: ClipboardList,   show: isAdmin, mobile: false },
     { to: '/admin/resources',    label: 'Resources',  Icon: BookOpen,        show: isAdmin, mobile: false },
     { to: '/admin/folders',      label: 'Folders',    Icon: Folder,          show: isAdmin, mobile: false },
     { to: '/admin/messages',     label: 'Messages',   Icon: Mail,            show: isAdmin, mobile: false },
+    { to: '/classroom',          label: 'Classroom',  Icon: MessageSquare,   show: isAdmin, mobile: false },
     { to: '/admin',              label: 'Admin',      Icon: Shield,          show: isAdmin },
     { to: '/contact',            label: 'Contact',    Icon: Mail,            show: true },
   ].filter(l => l.show);

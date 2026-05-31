@@ -1,6 +1,8 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+import { createServer } from 'http';
+import { Server as SocketIOServer } from 'socket.io';
 import { CloudinaryStorage } from "multer-storage-cloudinary";
 import cloudinary from "./config/cloudinary.js";
 import express from 'express';
@@ -10,6 +12,8 @@ import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import webpush from 'web-push';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
 import resourceRoutes from './routes/resources.js';
@@ -23,13 +27,14 @@ import testSubmissionRoutes from './routes/testSubmission.js';
 import aiTestRoutes from "./routes/aiTestRoutes.js";
 import teacherRoutes from "./routes/teacherRoutes.js";
 import adminBroadcastRoutes from "./routes/adminBroadcast.js";
+import classroomRoutes from "./routes/classroom.js";
 import PushSubscription from './models/PushSubscription.js';
+import { initClassroomSocket } from './socket/classroomSocket.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Configure VAPID for Web Push
-// VAPID_SUBJECT from env takes priority so it matches the registered key pair
 webpush.setVapidDetails(
   process.env.VAPID_SUBJECT || ('mailto:' + (process.env.EMAIL_USER || 'admin@academicrshub.com')),
   process.env.VAPID_PUBLIC_KEY,
@@ -37,25 +42,76 @@ webpush.setVapidDetails(
 );
 
 const app = express();
+const httpServer = createServer(app);
+
+/* ── Socket.IO ── */
+const io = new SocketIOServer(httpServer, {
+  cors: {
+    origin: (origin, cb) => cb(null, true),
+    credentials: true,
+  },
+  transports: ['websocket', 'polling'],
+});
+
+let classroomNsp = null;
+const getIO = () => io;
+
+// Init classroom socket namespace after server is ready
+initClassroomSocket(io);
+
+app.set('trust proxy', 1);
+
+/* ── Security headers ── */
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  contentSecurityPolicy: false,
+}));
+
+/* ── Rate limiters ── */
+app.use(rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 1000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many requests, please try again later.' },
+  skip: (req) => req.path === '/api/health' || req.path.startsWith('/socket.io'),
+}));
+
+export const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 50,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many auth attempts, please try again later.' },
+});
+
+export const aiLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'AI generation limit reached. Please wait before generating more tests.' },
+});
 
 const storage = new CloudinaryStorage({
   cloudinary,
   params: async (req, file) => {
     const isImage = file.mimetype.startsWith("image/");
+    const isAudio = file.mimetype.startsWith("audio/");
     const ext = file.originalname.split('.').pop();
     const name = file.originalname.replace(/\.[^/.]+$/, "").replace(/\s+/g, "-");
     return {
       folder: "academic-resources",
       resource_type: isImage ? "image" : "raw",
       public_id: `${Date.now()}-${name}.${ext}`,
-      flags: isImage ? [] : ["attachment"],
+      flags: (isImage || isAudio) ? [] : ["attachment"],
     };
   },
 });
 
 const upload = multer({ storage, limits: { fileSize: 100 * 1024 * 1024 } });
 
-app.use(cors({
+const corsOptions = {
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
     try {
@@ -71,12 +127,14 @@ app.use(cors({
     callback(new Error(`CORS blocked: ${origin}`));
   },
   credentials: true,
-}));
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Routes
-app.use('/api/auth', authRoutes);
+app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/resources', resourceRoutes(upload));
 app.use('/api/folders', folderRoutes);
@@ -86,18 +144,16 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/questions', questionRoutes);
 app.use('/api/admin/tests', adminTestRoutes);
 app.use('/api/testSubmission', testSubmissionRoutes);
-app.use("/api/ai-tests", aiTestRoutes);
+app.use("/api/ai-tests", aiLimiter, aiTestRoutes);
 app.use("/api/teacher", teacherRoutes);
 app.use("/api/admin/broadcast", adminBroadcastRoutes);
+app.use("/api/classroom", classroomRoutes(upload, getIO));
 
-// Web Push — only delivery method
+// Web Push
 export const sendNotification = async (userId, message, url = null) => {
   try {
     const subs = await PushSubscription.find({ userId });
-    if (subs.length === 0) {
-      console.log(`[PUSH] No subscriptions for user ${userId}`);
-      return;
-    }
+    if (subs.length === 0) return;
     const payload = JSON.stringify({
       title: 'Academic Resources Hub',
       body: message,
@@ -107,8 +163,7 @@ export const sendNotification = async (userId, message, url = null) => {
     const results = await Promise.allSettled(
       subs.map((s) =>
         webpush.sendNotification(s.subscription, payload).catch(async (err) => {
-          // Clean up invalid/expired subscriptions (410 gone, 404 not found, 401 wrong key)
-          if (err.statusCode === 410 || err.statusCode === 404 || err.statusCode === 401 || err.statusCode === 403) {
+          if ([410, 404, 401, 403].includes(err.statusCode)) {
             await PushSubscription.findByIdAndDelete(s._id);
           } else {
             console.error('[PUSH] Send error:', err.statusCode, err.message);
@@ -122,7 +177,6 @@ export const sendNotification = async (userId, message, url = null) => {
     console.error('[PUSH] sendNotification error:', err.message);
   }
 };
-
 
 // Admin stats endpoint
 app.get('/api/admin/stats', async (req, res) => {
@@ -161,11 +215,11 @@ app.get('/api/admin/stats', async (req, res) => {
       messages: { total: totalMessages, unread: unreadMessages },
     });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error('[admin/stats]', err.message);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
-// Public — all platform-approved published tests (visible to all logged-in students)
 app.get('/api/tests/published', async (req, res) => {
   try {
     const Test = (await import('./models/Test.js')).default;
@@ -174,12 +228,19 @@ app.get('/api/tests/published', async (req, res) => {
       .sort({ createdAt: -1 });
     res.json(tests);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error('[tests/published]', err.message);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
 app.get("/", (req, res) => res.send("Backend is Live 🚀"));
-app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
+
+app.use((err, req, res, next) => {
+  console.error('[ERROR]', req.method, req.path, err.message);
+  if (res.headersSent) return;
+  const status = err.status || err.statusCode || 500;
+  res.status(status).json({ message: err.message && status < 500 ? err.message : 'An unexpected error occurred.' });
+});
 
 const PORT = process.env.PORT || 5000;
 
@@ -191,12 +252,50 @@ const encodeMongoURI = (uri) => {
   return protocol + encodeURIComponent(user) + ':' + encodeURIComponent(password) + '@' + rest;
 };
 
-// Start listening immediately so Render detects the port right away
-app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
+app.get('/api/health', (req, res) => {
+  const states = { 0: 'disconnected', 1: 'connected', 2: 'connecting', 3: 'disconnecting' };
+  const dbState = mongoose.connection.readyState;
+  res.json({
+    status: 'ok',
+    db: states[dbState] || 'unknown',
+    dbState,
+    mongoUriSet: !!process.env.MONGO_URI,
+    mongoUriPrefix: process.env.MONGO_URI ? process.env.MONGO_URI.slice(0, 20) + '…' : 'NOT SET',
+    env: process.env.NODE_ENV || 'development',
+    uptime: Math.floor(process.uptime()) + 's',
+  });
+});
 
-// Connect to MongoDB in the background
-mongoose.connect(encodeMongoURI(process.env.MONGO_URI))
-  .then(() => console.log('Connected to MongoDB'))
-  .catch((err) => console.error('MongoDB connection error:', err));
+httpServer.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
+
+const connectWithRetry = (retries = 5, delay = 3000) => {
+  mongoose.connect(encodeMongoURI(process.env.MONGO_URI), {
+    serverSelectionTimeoutMS: 10000,
+    socketTimeoutMS: 45000,
+    connectTimeoutMS: 10000,
+  })
+    .then(async () => {
+      console.log('Connected to MongoDB');
+      // One-time migration: fix accounts with invalid role 'user' → 'student'
+      try {
+        const { default: User } = await import('./models/User.js');
+        const result = await User.updateMany({ role: 'user' }, { $set: { role: 'student' } });
+        if (result.modifiedCount > 0) {
+          console.log(`[MIGRATION] Fixed ${result.modifiedCount} account(s) with invalid role "user" → "student"`);
+        }
+      } catch (e) {
+        console.error('[MIGRATION] Role fix failed:', e.message);
+      }
+    })
+    .catch((err) => {
+      console.error(`MongoDB connection error (retries left: ${retries}):`, err.message);
+      if (retries > 0) {
+        setTimeout(() => connectWithRetry(retries - 1, delay), delay);
+      } else {
+        console.error('MongoDB connection failed after all retries.');
+      }
+    });
+};
+connectWithRetry();
 
 export default app;

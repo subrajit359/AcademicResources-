@@ -83,6 +83,14 @@ export default function TakeTest() {
   const [reviewLoading,   setRevLoad]  = useState(false);
   const [showReview,      setShowReview] = useState(false);
   const [copied,          setCopied]     = useState(false);
+  const [showExitModal,   setExitModal]  = useState(false);
+
+  /* ── Per-question time tracking ── */
+  const [questionTimings, setQuestionTimings] = useState({});
+  const [currentQSecs, setCurrentQSecs] = useState(0);
+  const qTimerRef      = useRef(null);
+  const qStartRef      = useRef(Date.now());
+  const qTimingsRef    = useRef({});
 
   const DRAFT_KEY = `test_draft_${shareCode}`;
 
@@ -116,8 +124,20 @@ export default function TakeTest() {
 
   /* ── Lock body scroll when submit modal is open ── */
   useEffect(() => {
-    document.body.style.overflow = showModal ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
+    if (showModal) {
+      const y = window.scrollY;
+      document.body.style.overflow = 'hidden';
+      document.body.style.position = 'fixed';
+      document.body.style.top = `-${y}px`;
+      document.body.style.width = '100%';
+      return () => {
+        document.body.style.position = '';
+        document.body.style.top = '';
+        document.body.style.width = '';
+        document.body.style.overflow = '';
+        window.scrollTo(0, y);
+      };
+    }
   }, [showModal]);
 
   /* ── Fetch test by shareCode ── */
@@ -210,6 +230,44 @@ export default function TakeTest() {
   };
 
   useEffect(() => () => clearInterval(timerRef.current), []);
+
+  /* ── Per-question timer: count up while viewing each question ── */
+  const flushCurrentQ = () => {
+    const elapsed = Math.round((Date.now() - qStartRef.current) / 1000);
+    return elapsed;
+  };
+
+  /* ── Accumulate time when leaving a question (activeQ changes) ── */
+  const prevActiveQRef = useRef(null);
+  useEffect(() => {
+    if (state !== "active") {
+      clearInterval(qTimerRef.current);
+      return;
+    }
+
+    // 1. Flush elapsed time for the question we just LEFT (before resetting qStartRef)
+    if (prevActiveQRef.current !== null && questions[prevActiveQRef.current]) {
+      const prevQId = questions[prevActiveQRef.current]._id.toString();
+      const elapsed = Math.round((Date.now() - qStartRef.current) / 1000);
+      qTimingsRef.current = {
+        ...qTimingsRef.current,
+        [prevQId]: (qTimingsRef.current[prevQId] || 0) + elapsed,
+      };
+      setQuestionTimings({ ...qTimingsRef.current });
+    }
+    prevActiveQRef.current = activeQ;
+
+    // 2. Now start the timer for the new question, resuming any prior time on it
+    const q = questions[activeQ];
+    const alreadySpent = q ? (qTimingsRef.current[q._id.toString()] || 0) : 0;
+    qStartRef.current = Date.now();
+    setCurrentQSecs(alreadySpent);
+    clearInterval(qTimerRef.current);
+    qTimerRef.current = setInterval(() => {
+      setCurrentQSecs(alreadySpent + Math.round((Date.now() - qStartRef.current) / 1000));
+    }, 1000);
+    return () => clearInterval(qTimerRef.current);
+  }, [activeQ, state]);
 
   /* ── Auto-save answers to localStorage during active test ── */
   useEffect(() => {
@@ -335,16 +393,29 @@ export default function TakeTest() {
   /* ── Submit ── */
   const handleSubmit = async () => {
     clearInterval(timerRef.current);
+    clearInterval(qTimerRef.current);
     setTaken(Math.round((Date.now() - startRef.current) / 1000));
     setSub(true);
     setModal(false);
     setShowCheat(false);
 
+    // Flush the time spent on the current question before submitting
+    const finalTimings = { ...qTimingsRef.current };
+    if (questions[prevActiveQRef.current ?? activeQ]) {
+      const qId = questions[prevActiveQRef.current ?? activeQ]._id.toString();
+      const elapsed = Math.round((Date.now() - qStartRef.current) / 1000);
+      finalTimings[qId] = (finalTimings[qId] || 0) + elapsed;
+    }
+
     try {
+      const token = localStorage.getItem("token");
       const res = await fetch(`${API_URL}/api/teacher/take/${test._id}/submit`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ answers, userId: user?.id || user?._id, userName: user?.name, violations: violationLogRef.current }),
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ answers, userId: user?.id || user?._id, userName: user?.name, violations: violationLogRef.current, questionTimings: finalTimings }),
       });
       const data = await res.json();
       if (res.status === 409) { setState("already"); return; }
@@ -372,6 +443,13 @@ export default function TakeTest() {
 
   // Always point to the latest handleSubmit so timer & anti-cheat refs don't go stale
   handleSubmitRef.current = handleSubmit;
+
+  const handleExit = () => {
+    clearInterval(timerRef.current);
+    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    localStorage.removeItem(DRAFT_KEY);
+    navigate('/');
+  };
 
   /* ── Countdown sound: tick every second for last 15 s ── */
   useEffect(() => {
@@ -678,154 +756,158 @@ export default function TakeTest() {
 
   /* ── RESULT ── */
   if (state === "result" && result) {
-    const pct       = result.pct ?? (result.total ? Math.round((result.score/result.total)*100) : 0);
-    const grade     = pct>=90?"A+":pct>=80?"A":pct>=70?"B":pct>=60?"C":pct>=40?"D":"F";
-    const gradeColor= pct>=70?"#059669":pct>=40?"#d97706":"#dc2626";
-    const headline  = pct>=80?"Excellent Work!":pct>=60?"Well Done!":pct>=40?"Good Effort!":"Keep Practising!";
-    const barBg     = pct>=70?"linear-gradient(90deg,#059669,#34d399)":pct>=40?"linear-gradient(90deg,#d97706,#fbbf24)":"linear-gradient(90deg,#dc2626,#f87171)";
+    const pct        = result.pct ?? (result.total ? Math.round((result.score/result.total)*100) : 0);
+    const headline   = pct>=80?"Excellent Work!":pct>=60?"Well Done!":pct>=40?"Good Effort!":"Keep Practising!";
+    const barBg      = pct>=70?"linear-gradient(90deg,#059669,#34d399)":pct>=40?"linear-gradient(90deg,#d97706,#fbbf24)":"linear-gradient(90deg,#dc2626,#f87171)";
+    const detMap     = result.detailedAnswers || {};
+    const skippedCnt = Object.values(detMap).filter(d => !d.given).length;
+    const wrongCnt   = result.total - result.score - skippedCnt;
+
+    const doShare = () => {
+      const text = `I scored ${result.score}/${result.total} (${pct}%) on "${test?.title}" at AcadHub!`;
+      if (navigator.share) { navigator.share({ title:"My AcadHub Result", text }).catch(() => {}); }
+      else { navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }); }
+    };
 
     return (
-      <div style={{ maxWidth:640, margin:"48px auto", padding:"0 20px 60px" }}>
+      <div>
+        {/* ════ SCORECARD HERO ════ */}
+        <div className="scorecard-hero">
+          <div className="scorecard-hero-bg"/>
+          <div className="scorecard-inner">
+            <div className="scorecard-left">
+              <ScoreRing score={result.score} total={result.total}/>
+              <Stars pct={pct}/>
+              <h2 className="scorecard-headline">{headline}</h2>
+              <p className="scorecard-sub">{test?.title}</p>
+              {test?.teacherName && <p style={{ color:"rgba(255,255,255,0.5)", fontSize:12, margin:"2px 0 0" }}>By {test.teacherName}</p>}
+            </div>
 
-        {/* ── Result Card ── */}
-        <div className="test-card-adv" style={{ gap:0, padding:0, overflow:"hidden" }}>
-
-          {/* Top gradient band */}
-          <div style={{ background:"linear-gradient(135deg,#1e40af,#7c3aed)", padding:"32px 28px 28px", textAlign:"center" }}>
-            <ScoreRing score={result.score} total={result.total}/>
-            <Stars pct={pct}/>
-            <h2 style={{ margin:"12px 0 4px", color:"#fff", fontSize:22, fontWeight:900 }}>{headline}</h2>
-            <p style={{ margin:0, color:"rgba(255,255,255,0.7)", fontSize:14 }}>{test?.title}</p>
-            {test?.teacherName && <p style={{ margin:"4px 0 0", color:"rgba(255,255,255,0.5)", fontSize:12 }}>By {test.teacherName}</p>}
-          </div>
-
-          {/* Stats tiles */}
-          <div style={{ padding:"24px 24px 0" }}>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
-              <div className="sc-tile sc-tile-correct" style={{ flexDirection:"column", alignItems:"center", padding:"14px 8px", gap:6 }}>
-                <CheckCircle size={20} color="#059669"/>
-                <span className="sc-tile-num" style={{ color:"#059669" }}>{result.score}</span>
+            <div className="scorecard-tiles">
+              <div className="sc-tile sc-tile-correct">
+                <CheckCircle size={22} color="#059669"/>
+                <span className="sc-tile-num">{result.score}</span>
                 <span className="sc-tile-label">Correct</span>
               </div>
-              <div className="sc-tile sc-tile-wrong" style={{ flexDirection:"column", alignItems:"center", padding:"14px 8px", gap:6 }}>
-                <XCircle size={20} color="#dc2626"/>
-                <span className="sc-tile-num" style={{ color:"#dc2626" }}>{result.total - result.score}</span>
+              <div className="sc-tile sc-tile-wrong">
+                <XCircle size={22} color="#dc2626"/>
+                <span className="sc-tile-num">{wrongCnt}</span>
                 <span className="sc-tile-label">Wrong</span>
               </div>
-              <div className="sc-tile" style={{ flexDirection:"column", alignItems:"center", padding:"14px 8px", gap:6, borderColor:"rgba(251,191,36,0.4)", background:"rgba(251,191,36,0.08)" }}>
-                <Award size={20} color={gradeColor}/>
-                <span className="sc-tile-num" style={{ color:gradeColor, fontSize:20 }}>Grade {grade}</span>
-                <span className="sc-tile-label">{result.total} Questions</span>
+              <div className="sc-tile sc-tile-skip">
+                <Minus size={22} color="rgba(255,255,255,0.6)"/>
+                <span className="sc-tile-num">{skippedCnt}</span>
+                <span className="sc-tile-label">Skipped</span>
+              </div>
+              <div className="sc-tile sc-tile-accuracy">
+                <Target size={22} color="#fbbf24"/>
+                <span className="sc-tile-num">{pct}%</span>
+                <span className="sc-tile-label">Accuracy</span>
+              </div>
+              <div className="sc-tile sc-tile-time">
+                <Timer size={22} color="#a78bfa"/>
+                <span className="sc-tile-num">{timeTaken > 0 ? fmt(timeTaken) : "—"}</span>
+                <span className="sc-tile-label">Time Taken</span>
+              </div>
+              <div className="sc-tile sc-tile-total">
+                <ListChecks size={22} color="#67e8f9"/>
+                <span className="sc-tile-num">{result.total}</span>
+                <span className="sc-tile-label">Total Qs</span>
               </div>
             </div>
 
-            {/* Score bar */}
-            <div style={{ margin:"20px 0 0" }}>
-              <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, fontWeight:700, color:"var(--text)", marginBottom:8 }}>
-                <span>Score</span><span>{pct}%</span>
+            <div className="scorecard-bar-wrap">
+              <div className="scorecard-bar-label"><span>Score</span><span>{pct}%</span></div>
+              <div className="scorecard-bar-track">
+                <div className="scorecard-bar-fill" style={{ width:`${pct}%`, background:barBg }}/>
               </div>
-              <div style={{ height:10, borderRadius:99, background:"var(--border)", overflow:"hidden" }}>
-                <div style={{ height:"100%", width:`${pct}%`, borderRadius:99, background:barBg, transition:"width 1.2s cubic-bezier(.4,0,.2,1)" }}/>
-              </div>
+              <div className="scorecard-bar-markers"><span>0</span><span>Pass (40%)</span><span>100</span></div>
             </div>
 
-            {timeTaken > 0 && (
-              <div style={{ display:"flex", alignItems:"center", gap:6, margin:"14px 0 0", fontSize:13, color:"var(--text-muted)" }}>
-                <Timer size={14}/> Time taken: <strong style={{ color:"var(--text)" }}>{fmt(timeTaken)}</strong>
-              </div>
-            )}
-          </div>
-
-          {/* Actions */}
-          <div style={{ padding:"20px 24px 24px", display:"flex", gap:10, flexWrap:"wrap" }}>
-            <button className="btn btn-primary" style={{ flex:1 }} onClick={() => navigate("/")}>
-              <ChevronLeft size={14}/> Back to Home
-            </button>
-            {questions.length > 0 && (
-              <button className="btn btn-outline" style={{ flex:1 }}
-                onClick={() => { setShowReview(r => !r); setTimeout(() => document.getElementById("answer-review")?.scrollIntoView({ behavior:"smooth" }), 100); }}>
-                <Eye size={14}/> {showReview ? "Hide Review" : "Review Answers"}
+            <div className="scorecard-actions">
+              <button className="sc-action-btn sc-retry-btn" onClick={() => navigate("/")}>
+                <ChevronLeft size={16}/> Back to Home
               </button>
-            )}
-            <button
-              className="btn btn-outline"
-              style={{ flex:1 }}
-              onClick={() => {
-                const score = result?.score ?? 0;
-                const total = result?.total ?? 0;
-                const pct   = total ? Math.round((score / total) * 100) : 0;
-                const text  = `I scored ${score}/${total} (${pct}%) on a test at AcadHub!`;
-                if (navigator.share) {
-                  navigator.share({ title: 'My AcadHub Result', text }).catch(() => {});
-                } else {
-                  navigator.clipboard.writeText(text).then(() => {
-                    setCopied(true);
-                    setTimeout(() => setCopied(false), 2000);
-                  });
-                }
-              }}
-            >
-              {copied ? <><Check size={14}/> Copied!</> : <><Share2 size={14}/> Share Result</>}
-            </button>
+              {questions.length > 0 && (
+                <button className="sc-action-btn sc-review-btn"
+                  onClick={() => { setShowReview(r => !r); setTimeout(() => document.getElementById("tt-review")?.scrollIntoView({ behavior:"smooth" }), 100); }}>
+                  <Eye size={16}/> {showReview ? "Hide Review" : "Review Answers"}
+                </button>
+              )}
+              <button className="sc-action-btn" style={{ background:"rgba(255,255,255,0.12)", color:"#fff", border:"1.5px solid rgba(255,255,255,0.25)" }} onClick={doShare}>
+                {copied ? <><Check size={16}/> Copied!</> : <><Share2 size={16}/> Share Result</>}
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Per-question answer review */}
+        {/* ════ REVIEW ANSWERS ════ */}
         {showReview && questions.length > 0 && (
-          <div id="answer-review" style={{ marginTop:24, display:"flex", flexDirection:"column", gap:14 }}>
-            <h3 style={{ fontSize:17, fontWeight:800, margin:0, color:"var(--text)" }}>Your Answer Review</h3>
-            {questions.map((q, idx) => {
-              const qId        = q._id.toString();
-              const detail     = result?.detailedAnswers?.[qId] || {};
-              const correctAnswer = detail.correctAnswer;
-              const explanation   = detail.explanation;
-              const given      = answers[qId] || detail.given;
-              const isCorrect  = given === correctAnswer;
-              const unanswered = !given;
-              const borderColor= isCorrect?"#059669":unanswered?"#d97706":"#dc2626";
-              const bgColor    = isCorrect?"#f0fdf4":unanswered?"#fffbeb":"#fef2f2";
-              return (
-                <div key={q._id} className="test-card-adv" style={{ border:`1.5px solid ${borderColor}`, background:bgColor, gap:10 }}>
-                  <div style={{ display:"flex", gap:10, alignItems:"flex-start" }}>
-                    <span style={{ background: isCorrect?"#059669":unanswered?"#d97706":"#dc2626", color:"#fff", borderRadius:6, padding:"2px 8px", fontSize:12, fontWeight:700, flexShrink:0 }}>Q{idx+1}</span>
-                    <p style={{ margin:0, fontWeight:600, fontSize:14, lineHeight:1.5, color:"var(--text)", flex:1 }}>{q.question}</p>
-                    <span style={{ flexShrink:0 }}>
-                      {isCorrect?<CheckCircle size={18} color="#059669"/>:unanswered?<Minus size={18} color="#d97706"/>:<XCircle size={18} color="#dc2626"/>}
-                    </span>
-                  </div>
-                  <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-                    {q.options.map((opt, j) => {
-                      const isAnswer  = opt === correctAnswer;
-                      const isGiven   = opt === given;
-                      const hl = isAnswer?{ bg:"#ecfdf5", border:"#059669", color:"#059669" }
-                               : isGiven ?{ bg:"#fef2f2", border:"#dc2626", color:"#dc2626" }
-                               :           { bg:"transparent", border:"var(--border)", color:"var(--text-muted)" };
-                      return (
-                        <div key={j} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 12px", borderRadius:8, background:hl.bg, border:`1.5px solid ${hl.border}` }}>
-                          <span style={{ width:24, height:24, borderRadius:5, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, flexShrink:0, background:hl.border, color:"#fff" }}>{LETTERS[j]}</span>
-                          <span style={{ fontSize:13, fontWeight: isAnswer||isGiven?700:400, color:hl.color }}>{opt}</span>
-                          {isAnswer && <CheckCircle size={14} color="#059669" style={{ marginLeft:"auto" }}/>}
-                          {isGiven && !isAnswer && <XCircle size={14} color="#dc2626" style={{ marginLeft:"auto" }}/>}
+          <div id="tt-review" className="test-body-layout" style={{ paddingTop:28, paddingBottom:48 }}>
+            <div className="test-questions-area">
+              <div className="questions-list">
+                {questions.map((q, idx) => {
+                  const qId   = q._id.toString();
+                  const det   = detMap[qId] || {};
+                  const corr  = det.correctAnswer;
+                  const given = answers[qId] || det.given;
+                  const isRight = !!(given && given === corr);
+                  const isWrong = !!(given && given !== corr);
+                  const qSecs = result?.questionTimings?.[qId] ?? questionTimings[qId] ?? null;
+                  return (
+                    <div key={q._id} className={`question-card-adv${isRight?" qca-correct":isWrong?" qca-wrong":" qca-skipped"}`}>
+                      <div className="qca-topbar">
+                        <div className="qca-num-badge">Q{idx+1}</div>
+                        <div className={`qca-result-badge${isRight?" qrb-correct":isWrong?" qrb-wrong":" qrb-skip"}`}>
+                          {isRight?<><CheckCircle size={13}/> Correct</>:isWrong?<><XCircle size={13}/> Incorrect</>:<><Minus size={13}/> Skipped</>}
                         </div>
-                      );
-                    })}
-                  </div>
-                  {unanswered && correctAnswer && (
-                    <p style={{ margin:0, fontSize:12, color:"#92400e", fontWeight:600, display:"flex", alignItems:"center", gap:5 }}>
-                      <AlertTriangle size={13}/> You did not answer — correct answer: <strong style={{ color:"#059669" }}>{correctAnswer}</strong>
-                    </p>
-                  )}
-                  {unanswered && !correctAnswer && (
-                    <p style={{ margin:0, fontSize:12, color:"#92400e", fontWeight:600, display:"flex", alignItems:"center", gap:5 }}><AlertTriangle size={13}/> You did not answer this question</p>
-                  )}
-                  {explanation && (
-                    <div style={{ padding:"8px 12px", background:"#eff6ff", borderRadius:8, fontSize:13, color:"#1d4ed8", borderLeft:"3px solid #3b82f6" }}>
-                      <strong>Explanation:</strong> {explanation}
+                        <div className="qca-progress-mini">{idx+1}/{questions.length}</div>
+                        {qSecs != null && (
+                          <div style={{ display:"flex", alignItems:"center", gap:4, marginLeft:"auto", fontSize:12, color:"var(--text-muted)", background:"var(--bg-soft,#f3f4f6)", borderRadius:6, padding:"3px 9px", fontVariantNumeric:"tabular-nums" }}>
+                            <Timer size={11}/> {fmt(qSecs)}
+                          </div>
+                        )}
+                      </div>
+                      <h3 className="qca-text">{q.question}</h3>
+                      <div className="options-adv">
+                        {q.options.map((opt, i) => {
+                          const isSel   = given === opt;
+                          const isCorr  = opt === corr;
+                          const isWrSel = isSel && opt !== corr;
+                          return (
+                            <button key={i} disabled
+                              className={`option-adv${isSel?" oa-selected":""}${isCorr?" oa-correct":""}${isWrSel?" oa-wrong":""}`}
+                            >
+                              <span className={`oa-letter${isSel?" oa-letter-sel":""}${isCorr?" oa-letter-correct":""}${isWrSel?" oa-letter-wrong":""}`}>{LETTERS[i]}</span>
+                              <span className="oa-text">{opt}</span>
+                              {isCorr  && <CheckCircle size={15} color="#059669" style={{ marginLeft:"auto", flexShrink:0 }}/>}
+                              {isWrSel && <XCircle    size={15} color="#dc2626" style={{ marginLeft:"auto", flexShrink:0 }}/>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {isWrong && corr && (
+                        <div className="qca-correct-note">
+                          <Award size={13} color="#059669"/>
+                          <span>Correct answer: <strong>{corr}</strong></span>
+                        </div>
+                      )}
+                      {!given && corr && (
+                        <div className="qca-correct-note">
+                          <Award size={13} color="#059669"/>
+                          <span>You did not answer — correct answer: <strong>{corr}</strong></span>
+                        </div>
+                      )}
+                      {det.explanation && (
+                        <div style={{ marginTop:8, padding:"8px 12px", background:"#eff6ff", borderRadius:8, fontSize:13, color:"#1d4ed8", borderLeft:"3px solid #3b82f6" }}>
+                          <strong>Explanation:</strong> {det.explanation}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              );
-            })}
+                  );
+                })}
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -856,12 +938,15 @@ export default function TakeTest() {
                 <h2 style={{ margin:"0 0 8px", color:"#c2410c", fontSize:22, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><AlertTriangle size={22}/> Warning {cheatCount}/2</h2>
                 <p style={{ color:"#374151", marginBottom:6, fontWeight:600 }}>{cheatReason}</p>
                 <p style={{ color:"#6b7280", fontSize:13, marginBottom:24 }}>
-                  This is your <strong>1st warning</strong>. One more violation and your test will be <strong>auto-submitted immediately</strong>.
+                  This is your <strong>1st warning</strong>. One more violation and your test will be <strong>auto-submitted in 5 seconds</strong>.
                 </p>
                 <button
                   className="btn btn-primary"
                   style={{ width:"100%", padding:"12px 0", fontSize:15 }}
-                  onClick={() => setShowCheat(false)}
+                  onClick={async () => {
+                    try { await document.documentElement.requestFullscreen(); } catch {}
+                    setShowCheat(false);
+                  }}
                 >
                   I Understand — Continue Test
                 </button>
@@ -902,6 +987,13 @@ export default function TakeTest() {
             <span className="topbar-progress-label">{answered}/{totalQ} answered</span>
           </div>
           <div className="test-topbar-right">
+            <button
+              className="btn btn-outline"
+              style={{ padding:"5px 12px", fontSize:12, borderColor:"#dc2626", color:"#dc2626", gap:4, display:"flex", alignItems:"center", flexShrink:0 }}
+              onClick={() => setExitModal(true)}
+            >
+              <XCircle size={13}/> Exit
+            </button>
             <div
               className={`topbar-timer${timerBoom ? " timer-boom" : timerCritical ? " timer-critical" : ""}`}
               style={{ background: timerWarn?"#fef2f2":"var(--bg)", border:`1.5px solid ${timerWarn?"#fecaca":"var(--border)"}` }}
@@ -958,6 +1050,9 @@ export default function TakeTest() {
                 <div className="qca-topbar">
                   <div className="qca-num-badge">Q{activeQ+1}</div>
                   <div className="qca-progress-mini">{activeQ+1}/{totalQ}</div>
+                  <div style={{ display:"flex", alignItems:"center", gap:4, marginLeft:"auto", fontSize:12, color:"var(--text-muted)", background:"var(--bg-soft,#f3f4f6)", borderRadius:6, padding:"3px 9px", fontVariantNumeric:"tabular-nums" }}>
+                    <Timer size={11}/> {fmt(currentQSecs)}
+                  </div>
                 </div>
                 <h3 className="qca-text">{q.question}</h3>
                 <div className="options-adv">
@@ -993,6 +1088,9 @@ export default function TakeTest() {
           })()}
 
           <div className="test-submit-bar">
+            <button className="btn btn-outline" style={{ padding:"6px 14px", fontSize:13, borderColor:"#dc2626", color:"#dc2626" }} onClick={() => setExitModal(true)}>
+              <XCircle size={14}/> Exit
+            </button>
             <div className="tsb-info">
               <TrendingUp size={15} color="var(--primary)"/>
               <span><strong>{answered}</strong> of <strong>{totalQ}</strong> answered</span>
@@ -1010,12 +1108,36 @@ export default function TakeTest() {
         <div className="floating-submit-progress">
           <div style={{ width:`${totalQ?(answered/totalQ)*100:0}%` }}/>
         </div>
-        <button className="submit-btn-main floating-submit-btn" onClick={() => setModal(true)} disabled={submitting}>
-          <Send size={15}/> Submit Test
-        </button>
+        <div style={{ display:"flex", gap:8 }}>
+          <button className="btn btn-outline" style={{ padding:"8px 14px", fontSize:13, borderColor:"#dc2626", color:"#dc2626", flexShrink:0 }} onClick={() => setExitModal(true)}>
+            <XCircle size={14}/> Exit
+          </button>
+          <button className="submit-btn-main floating-submit-btn" style={{ flex:1 }} onClick={() => setModal(true)} disabled={submitting}>
+            <Send size={15}/> Submit Test
+          </button>
+        </div>
       </div>
 
-      {/* Modal */}
+      {/* Exit confirmation modal */}
+      {showExitModal && (
+        <div className="modal-overlay" onClick={() => setExitModal(false)}>
+          <div className="modal-box" onClick={e => e.stopPropagation()}>
+            <div className="modal-icon"><XCircle size={28} color="#dc2626"/></div>
+            <h3 className="modal-title">Exit Test?</h3>
+            <p className="modal-body">
+              Your progress will be lost and the test will be marked as incomplete. This cannot be undone.
+            </p>
+            <div className="modal-actions">
+              <button className="btn btn-outline" onClick={() => setExitModal(false)}>Keep Going</button>
+              <button className="btn" style={{ background:"#dc2626", color:"white", gap:6, display:"flex", alignItems:"center" }} onClick={handleExit}>
+                <XCircle size={14}/> Exit Test
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Submit modal */}
       {showModal && (
         <div className="modal-overlay" onClick={()=>setModal(false)}>
           <div className="modal-box" onClick={e=>e.stopPropagation()}>

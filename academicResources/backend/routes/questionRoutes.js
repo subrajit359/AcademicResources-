@@ -14,7 +14,7 @@ router.post("/add", verifyAdmin, async (req, res) => {
     await q.save();
     res.json(q);
   } catch (err) {
-    res.status(500).json({ message: "Failed to add question", error: err.message });
+    res.status(500).json({ message: "Failed to add question" });
   }
 });
 
@@ -23,7 +23,7 @@ router.get("/", verifyAdmin, async (req, res) => {
     const data = await Question.find();
     res.json(data);
   } catch (err) {
-    res.status(500).json({ message: "Failed to fetch questions", error: err.message });
+    res.status(500).json({ message: "Failed to fetch questions" });
   }
 });
 

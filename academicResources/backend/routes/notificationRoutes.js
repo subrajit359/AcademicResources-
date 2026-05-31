@@ -25,7 +25,7 @@ router.post('/test', verifyToken, async (req, res) => {
     await sendNotification(req.userId, message);
     res.json({ message: 'Test notification sent', userId: req.userId });
   } catch (error) {
-    res.status(500).json({ message: 'Failed to send notification', error: error.message });
+    res.status(500).json({ message: 'Failed to send notification' });
   }
 });
 

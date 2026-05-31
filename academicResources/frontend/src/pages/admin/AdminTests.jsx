@@ -12,6 +12,388 @@ import {
   Brain, Zap, ListChecks, Calendar, GraduationCap, Timer,
 } from 'lucide-react';
 
+function timeAgo(date) {
+  if (!date) return '';
+  const diff = Date.now() - new Date(date).getTime();
+  const mins  = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days  = Math.floor(diff / 86400000);
+  const weeks = Math.floor(days / 7);
+  const months= Math.floor(days / 30);
+  if (mins  <  1) return 'just now';
+  if (mins  < 60) return `${mins}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days  <  7) return `${days}d ago`;
+  if (weeks <  5) return `${weeks}w ago`;
+  if (months< 12) return `${months}mo ago`;
+  return new Date(date).toLocaleDateString();
+}
+
+function EditTestModal({ test, categories, onClose, onSaved, toast }) {
+  const [title,     setTitle]     = useState(test.title || '');
+  const [desc,      setDesc]      = useState(test.description || '');
+  const [category,  setCategory]  = useState(test.category || categories[0] || 'CSE');
+  const [customCat, setCustomCat] = useState('');
+  const [showCustom,setShowCustom]= useState(() => !!(test.category && !categories.includes(test.category)));
+  const [subject,   setSubject]   = useState(test.subject || '');
+  const [duration,  setDuration]  = useState(test.duration || '');
+  const toLocal = (iso) => iso ? new Date(new Date(iso).getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '';
+  const [startTime, setStartTime] = useState(toLocal(test.startTime));
+  const [endTime,   setEndTime]   = useState(toLocal(test.endTime));
+  const [saving,    setSaving]    = useState(false);
+
+  useEffect(() => {
+    const y = window.scrollY;
+    document.body.style.overflow = 'hidden';
+    document.body.style.position = 'fixed';
+    document.body.style.top = `-${y}px`;
+    document.body.style.width = '100%';
+    return () => {
+      document.body.style.position = '';
+      document.body.style.top = '';
+      document.body.style.width = '';
+      document.body.style.overflow = '';
+      window.scrollTo(0, y);
+    };
+  }, []);
+
+  const save = async () => {
+    if (!title.trim()) { toast.error('Title required'); return; }
+    if (!duration)     { toast.error('Duration required'); return; }
+    setSaving(true);
+    const res = await fetch(`${API_URL}/api/admin/tests/${test._id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+      body: JSON.stringify({ title, description: desc, category, subject, duration: Number(duration), startTime: startTime ? new Date(startTime).toISOString() : null, endTime: endTime ? new Date(endTime).toISOString() : null }),
+    });
+    setSaving(false);
+    if (!res.ok) { toast.error('Failed to update test'); return; }
+    toast.edit('Test updated!');
+    onSaved();
+    onClose();
+  };
+
+  const overlay = {
+    position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)',
+    backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center',
+    justifyContent: 'center', zIndex: 1100, padding: '16px',
+  };
+  const card = {
+    background: '#fff', borderRadius: 16, boxShadow: '0 24px 64px rgba(0,0,0,0.18)',
+    width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto',
+    display: 'flex', flexDirection: 'column',
+  };
+
+  return (
+    <div style={overlay} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={card}>
+        {/* Header */}
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'20px 24px 16px', borderBottom:'1px solid #f1f5f9', flexShrink:0 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+            <div style={{ width:36, height:36, borderRadius:10, background:'#eef2ff', display:'flex', alignItems:'center', justifyContent:'center' }}>
+              <Pencil size={17} color="#6366f1" />
+            </div>
+            <div>
+              <div style={{ fontSize:16, fontWeight:700, color:'#0f172a' }}>Edit Test</div>
+              <div style={{ fontSize:12, color:'#94a3b8', marginTop:1 }}>{test.title}</div>
+            </div>
+          </div>
+          <button onClick={onClose} style={{ border:'none', background:'#f1f5f9', borderRadius:8, width:32, height:32, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', color:'#64748b' }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Form */}
+        <div style={{ padding:'20px 24px', display:'flex', flexDirection:'column', gap:16 }}>
+          <div>
+            <label style={{ fontSize:12, fontWeight:600, color:'#374151', display:'block', marginBottom:6 }}>Test Title <span style={{ color:'#ef4444' }}>*</span></label>
+            <input className="at2-input" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Data Structures Mid Term" />
+          </div>
+
+          <div>
+            <label style={{ fontSize:12, fontWeight:600, color:'#374151', display:'block', marginBottom:6 }}>Description <span style={{ fontSize:11, color:'#94a3b8', fontWeight:400 }}>optional</span></label>
+            <textarea className="at2-input at2-textarea" rows={2} value={desc} onChange={e => setDesc(e.target.value)} placeholder="Brief description of this test" style={{ resize:'vertical' }} />
+          </div>
+
+          <div>
+            <label style={{ fontSize:12, fontWeight:600, color:'#374151', display:'block', marginBottom:8 }}>Category</label>
+            <div style={{ display:'flex', flexWrap:'wrap', gap:8 }}>
+              {categories.map(c => {
+                const meta = CAT_COLORS[c] || CAT_FALLBACK;
+                const active = category === c;
+                return (
+                  <button
+                    key={c} type="button"
+                    onClick={() => { setCategory(c); setShowCustom(false); setCustomCat(''); }}
+                    style={{
+                      padding:'5px 14px', borderRadius:20, fontSize:12, fontWeight:600, cursor:'pointer',
+                      border: `1.5px solid ${active ? meta.border : '#e2e8f0'}`,
+                      background: active ? meta.bg : '#fff',
+                      color: active ? meta.color : '#64748b',
+                      transition: 'all 0.15s',
+                    }}
+                  >{c}</button>
+                );
+              })}
+              {/* Custom category pill */}
+              {(() => {
+                const isCustomActive = category && !categories.includes(category);
+                return (
+                  <button
+                    type="button"
+                    onClick={() => setShowCustom(s => !s)}
+                    style={{
+                      padding:'5px 14px', borderRadius:20, fontSize:12, fontWeight:600, cursor:'pointer',
+                      display:'flex', alignItems:'center', gap:5, transition:'all 0.15s',
+                      border: `1.5px solid ${(showCustom || isCustomActive) ? '#c4b5fd' : '#e2e8f0'}`,
+                      background: (showCustom || isCustomActive) ? '#faf5ff' : '#fff',
+                      color: (showCustom || isCustomActive) ? '#7c3aed' : '#64748b',
+                    }}
+                  >
+                    <Pencil size={10} />
+                    {isCustomActive ? category : 'Custom…'}
+                  </button>
+                );
+              })()}
+            </div>
+            {/* Inline custom input */}
+            {showCustom && (
+              <div style={{ display:'flex', gap:8, alignItems:'center', marginTop:10 }}>
+                <input
+                  autoFocus
+                  className="at2-input"
+                  value={customCat}
+                  onChange={e => setCustomCat(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && customCat.trim()) { setCategory(customCat.trim()); setShowCustom(false); }
+                    if (e.key === 'Escape') setShowCustom(false);
+                  }}
+                  onBlur={() => { if (customCat.trim()) { setCategory(customCat.trim()); setShowCustom(false); } else setShowCustom(false); }}
+                  placeholder="Type your category name…"
+                  style={{ flex:1 }}
+                />
+                <button
+                  type="button"
+                  onClick={() => { setShowCustom(false); setCustomCat(''); setCategory(categories[0] || 'CSE'); }}
+                  style={{ padding:'7px 12px', borderRadius:8, border:'1.5px solid #e2e8f0', background:'#fff', color:'#64748b', fontSize:12, fontWeight:600, cursor:'pointer', flexShrink:0 }}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+            <div>
+              <label style={{ fontSize:12, fontWeight:600, color:'#374151', display:'block', marginBottom:6 }}>Subject</label>
+              <input className="at2-input" value={subject} onChange={e => setSubject(e.target.value)} placeholder="e.g. Data Structures" />
+            </div>
+            <div>
+              <label style={{ fontSize:12, fontWeight:600, color:'#374151', display:'block', marginBottom:6 }}>Duration (mins) <span style={{ color:'#ef4444' }}>*</span></label>
+              <input className="at2-input" type="number" min={1} value={duration} onChange={e => setDuration(e.target.value)} placeholder="60" />
+            </div>
+            <div>
+              <label style={{ fontSize:12, fontWeight:600, color:'#374151', display:'block', marginBottom:6 }}>Start Time <span style={{ fontSize:11, color:'#94a3b8', fontWeight:400 }}>optional</span></label>
+              <input className="at2-input" type="datetime-local" value={startTime} onChange={e => setStartTime(e.target.value)} />
+            </div>
+            <div>
+              <label style={{ fontSize:12, fontWeight:600, color:'#374151', display:'block', marginBottom:6 }}>End Time <span style={{ fontSize:11, color:'#94a3b8', fontWeight:400 }}>optional</span></label>
+              <input className="at2-input" type="datetime-local" value={endTime} onChange={e => setEndTime(e.target.value)} />
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding:'16px 24px 20px', borderTop:'1px solid #f1f5f9', display:'flex', gap:10, justifyContent:'flex-end', flexShrink:0 }}>
+          <button onClick={onClose} style={{ padding:'9px 20px', borderRadius:9, border:'1.5px solid #e2e8f0', background:'#fff', color:'#374151', fontSize:13, fontWeight:600, cursor:'pointer' }}>
+            Cancel
+          </button>
+          <button
+            onClick={save} disabled={saving}
+            style={{ padding:'9px 22px', borderRadius:9, border:'none', background: saving ? '#a5b4fc' : '#6366f1', color:'#fff', fontSize:13, fontWeight:700, cursor: saving ? 'not-allowed' : 'pointer', display:'flex', alignItems:'center', gap:7 }}
+          >
+            <CheckCircle size={14} /> {saving ? 'Saving…' : 'Update Test'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TestResultsModal({ test, onClose }) {
+  const [results,         setResults]         = useState([]);
+  const [loading,         setLoading]         = useState(true);
+  const [reAttempting,    setReAttempting]    = useState(new Set());
+  const [reattemptTarget, setReattemptTarget] = useState(null);
+
+  const allowReAttempt = (r) => setReattemptTarget(r);
+
+  const doReAttempt = async (r) => {
+    setReattemptTarget(null);
+    setReAttempting(s => new Set(s).add(r._id));
+    try {
+      const res = await fetch(`${API_URL}/api/admin/tests/${test._id}/results/${r._id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+      });
+      if (res.ok) {
+        setResults(prev => prev.filter(x => x._id !== r._id));
+      }
+    } finally {
+      setReAttempting(s => { const n = new Set(s); n.delete(r._id); return n; });
+    }
+  };
+
+  useEffect(() => {
+    const y = window.scrollY;
+    document.body.style.overflow = 'hidden';
+    document.body.style.position = 'fixed';
+    document.body.style.top = `-${y}px`;
+    document.body.style.width = '100%';
+    return () => {
+      document.body.style.position = '';
+      document.body.style.top = '';
+      document.body.style.width = '';
+      document.body.style.overflow = '';
+      window.scrollTo(0, y);
+    };
+  }, []);
+
+  useEffect(() => {
+    fetch(`${API_URL}/api/admin/tests/${test._id}/results`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+    })
+      .then(r => r.ok ? r.json() : [])
+      .then(data => { setResults(Array.isArray(data) ? data : []); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [test._id]);
+
+  const total   = results.length;
+  const avg     = total ? Math.round(results.reduce((s, r) => s + Math.round((r.score / r.total) * 100), 0) / total) : 0;
+  const passed  = results.filter(r => Math.round((r.score / r.total) * 100) >= 60).length;
+  const highest = total ? Math.max(...results.map(r => Math.round((r.score / r.total) * 100))) : 0;
+  const pgResults = usePagination(results, 8);
+
+  const catMeta = CAT_COLORS[test.category] || CAT_FALLBACK;
+
+  return (
+    <div
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+      style={{ position:'fixed', inset:0, background:'rgba(15,23,42,0.6)', backdropFilter:'blur(4px)', zIndex:1200, display:'flex', alignItems:'flex-start', justifyContent:'center', padding:'80px 16px 16px', overflowY:'auto' }}
+    >
+      <div style={{ background:'#fff', borderRadius:18, width:'100%', maxWidth:680, maxHeight:'calc(100vh - 116px)', display:'flex', flexDirection:'column', boxShadow:'0 32px 80px rgba(0,0,0,0.22)', overflow:'hidden' }}>
+
+        {/* Header */}
+        <div style={{ padding:'20px 24px 16px', borderBottom:'1px solid #f1f5f9', display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:12, flexShrink:0 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+            <div style={{ width:40, height:40, borderRadius:11, background:'#eef2ff', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+              <BarChart2 size={19} color="#6366f1" />
+            </div>
+            <div>
+              <div style={{ fontSize:16, fontWeight:800, color:'#0f172a', lineHeight:1.3 }}>{test.title}</div>
+              <div style={{ fontSize:12, color:'#94a3b8', marginTop:2, display:'flex', alignItems:'center', gap:6 }}>
+                <span style={{ background: catMeta.bg, color: catMeta.color, borderRadius:20, padding:'1px 9px', fontWeight:600, fontSize:11 }}>{test.category}</span>
+                {test.subject && <span>{test.subject}</span>}
+                <span><Clock size={10} style={{ verticalAlign:'middle' }} /> {test.duration} mins</span>
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} style={{ border:'none', background:'#f1f5f9', borderRadius:9, width:34, height:34, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', color:'#64748b', flexShrink:0 }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Stats bar */}
+        {!loading && total > 0 && (
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:0, borderBottom:'1px solid #f1f5f9', flexShrink:0 }}>
+            {[
+              { label:'Submissions', value: total,         icon:<Users size={14} color="#6366f1" /> },
+              { label:'Avg Score',   value: `${avg}%`,     icon:<Target size={14} color="#0ea5e9" /> },
+              { label:'Pass Rate',   value: total ? `${Math.round((passed/total)*100)}%` : '—', icon:<CheckCircle size={14} color="#10b981" /> },
+              { label:'Top Score',   value: `${highest}%`, icon:<TrendingUp size={14} color="#f59e0b" /> },
+            ].map((s, i) => (
+              <div key={i} style={{ padding:'14px 16px', textAlign:'center', borderRight: i < 3 ? '1px solid #f1f5f9' : 'none', background:'#fafbff' }}>
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:5, marginBottom:4 }}>{s.icon}</div>
+                <div style={{ fontSize:18, fontWeight:800, color:'#0f172a' }}>{s.value}</div>
+                <div style={{ fontSize:11, color:'#94a3b8', fontWeight:500 }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Body */}
+        <div style={{ flex:1, overflowY:'auto', padding:'16px 24px' }}>
+          {loading ? (
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:10, padding:'48px 0', color:'#94a3b8' }}>
+              <GraduationCap size={20} className="spin" color="#6366f1" /> Loading results…
+            </div>
+          ) : results.length === 0 ? (
+            <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:'48px 0', color:'#94a3b8', gap:10 }}>
+              <TrendingUp size={44} strokeWidth={1.2} color="#e2e8f0" />
+              <div style={{ fontSize:14, fontWeight:600 }}>No submissions yet</div>
+              <div style={{ fontSize:12 }}>Results will appear here once students take this test</div>
+            </div>
+          ) : (
+            <div className="at2-results-list">
+              {pgResults.slice.map((r, i) => {
+                const globalRank = (pgResults.page - 1) * 8 + i;
+                const pct  = Math.round((r.score / r.total) * 100);
+                const pass = pct >= 60;
+                const busy = reAttempting.has(r._id);
+                return (
+                  <div key={r._id || i} className="at2-result-row" style={{ alignItems:'center' }}>
+                    <div className={`at2-result-rank ${globalRank === 0 ? 'at2-rank-gold' : globalRank === 1 ? 'at2-rank-silver' : globalRank === 2 ? 'at2-rank-bronze' : ''}`}>#{globalRank + 1}</div>
+                    <div className="at2-result-info">
+                      <div className="at2-result-name">{r.userId?.name || r.userId?.email || 'Unknown'}</div>
+                      <div className="at2-result-date">{new Date(r.submittedAt || r.createdAt).toLocaleString()}</div>
+                    </div>
+                    <div className="at2-result-bar-wrap">
+                      <div className="at2-result-bar" style={{ width:`${pct}%`, background: pass ? '#10b981' : '#f43f5e' }} />
+                    </div>
+                    <div className={`at2-result-badge ${pass ? 'at2-badge-pass' : 'at2-badge-fail'}`}>
+                      {pass ? <CheckCircle size={12}/> : <XCircle size={12}/>} {pct}%
+                    </div>
+                    <div className="at2-result-score">{r.score}/{r.total}</div>
+                    <button
+                      onClick={() => allowReAttempt(r)}
+                      disabled={busy}
+                      title="Delete this result so the student can retake the test"
+                      style={{ flexShrink:0, padding:'4px 10px', borderRadius:7, fontSize:11, fontWeight:700, cursor: busy ? 'not-allowed' : 'pointer', border:'1.5px solid #c7d2fe', background:'#eef2ff', color:'#4f46e5', opacity: busy ? 0.6 : 1, display:'flex', alignItems:'center', gap:4, whiteSpace:'nowrap' }}
+                    >
+                      <GraduationCap size={11} /> {busy ? '…' : 'Re-attempt'}
+                    </button>
+                  </div>
+                );
+              })}
+              <Pagination {...pgResults} />
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        {!loading && total > 0 && (
+          <div style={{ padding:'12px 24px', borderTop:'1px solid #f1f5f9', background:'#fafbff', flexShrink:0, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+            <span style={{ fontSize:12, color:'#94a3b8' }}>
+              {pgResults.from}–{pgResults.to} of {total} submission{total !== 1 ? 's' : ''} · sorted by score
+            </span>
+            <button onClick={onClose} style={{ padding:'7px 18px', borderRadius:8, border:'none', background:'#6366f1', color:'#fff', fontSize:13, fontWeight:700, cursor:'pointer' }}>Done</button>
+          </div>
+        )}
+      </div>
+      {reattemptTarget && (
+        <ConfirmModal
+          message={`Allow ${reattemptTarget.userId?.name || 'this student'} to re-attempt "${test.title}"? Their current result will be deleted.`}
+          title="Allow Re-attempt?"
+          type="warning"
+          confirmLabel="Allow Re-attempt"
+          onConfirm={() => doReAttempt(reattemptTarget)}
+          onCancel={() => setReattemptTarget(null)}
+        />
+      )}
+    </div>
+  );
+}
+
 function AdminShareCode({ code }) {
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -39,7 +421,7 @@ function AdminShareCode({ code }) {
   );
 }
 import { API_URL } from '../../config';
-import { getCategories } from '../../utils/categoryStore';
+import { getCategories, addCategory } from '../../utils/categoryStore';
 
 const CAT_COLORS = {
   'CSE':      { bg: '#eef2ff', color: '#6366f1', border: '#c7d2fe' },
@@ -51,7 +433,7 @@ const CAT_COLORS = {
 };
 const CAT_FALLBACK = { bg: '#f1f5f9', color: '#6366f1', border: '#c7d2fe' };
 
-const TABS = ['Create', 'Questions', 'Results', 'AI Sets', 'Teacher Tests'];
+const TABS = ['Create', 'Results', 'AI Sets', 'Teacher Tests'];
 
 const DIFF_META = {
   easy:   { color: '#059669', bg: '#ecfdf5', label: 'Easy' },
@@ -70,6 +452,8 @@ export default function AdminTests() {
   const [title,          setTitle]          = useState('');
   const [desc,           setDesc]           = useState('');
   const [category,       setCategory]       = useState('CSE');
+  const [customCat,      setCustomCat]      = useState('');
+  const [showCustom,     setShowCustom]     = useState(false);
   const [subject,        setSubject]        = useState('');
   const [duration,       setDuration]       = useState('');
   const [startTime,      setStartTime]      = useState('');
@@ -81,8 +465,10 @@ export default function AdminTests() {
   const [selectedTest,   setSelectedTest]   = useState('');
   const [resultTestId,   setResultTestId]   = useState('');
   const [testResults,    setTestResults]    = useState([]);
+  const [resultsModal,   setResultsModal]   = useState(null); // holds test object
   const [questionsModal, setQuestionsModal] = useState(null);
   const [confirmDlg,     setConfirmDlg]     = useState(null);
+  const [editModal,      setEditModal]      = useState(null);
   const [testDropOpen,   setTestDropOpen]   = useState(false);
   const [bulkMode,       setBulkMode]       = useState(false);
   const [bulkText,       setBulkText]       = useState('');
@@ -163,6 +549,7 @@ export default function AdminTests() {
   const pgAi = usePagination(filteredAi, 12);
 
   const filtered = useMemo(() => tests.filter(t => {
+    if (t.teacherId) return false; // teacher tests have their own tab
     const q = search.toLowerCase();
     return !q || t.title?.toLowerCase().includes(q) || t.subject?.toLowerCase().includes(q) || t.category?.toLowerCase().includes(q);
   }), [tests, search]);
@@ -171,38 +558,40 @@ export default function AdminTests() {
   const resetForm = () => {
     setEditingId(''); setTitle(''); setDesc(''); setCategory(categories[0] || 'CSE');
     setSubject(''); setDuration(''); setStartTime(''); setEndTime('');
+    setCustomCat(''); setShowCustom(false);
   };
 
   const createTest = async () => {
     if (!title.trim()) { toast.error('Title required'); return; }
     if (!duration)     { toast.error('Duration required'); return; }
     const res = await fetch(`${API_URL}/api/admin/tests/create`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, description: desc, category, subject, duration: Number(duration), startTime: startTime || null, endTime: endTime || null, createdBy: user?.id }),
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+      body: JSON.stringify({ title, description: desc, category, subject, duration: Number(duration), startTime: startTime ? new Date(startTime).toISOString() : null, endTime: endTime ? new Date(endTime).toISOString() : null, createdBy: user?.id }),
     });
     const data = await res.json();
     if (!res.ok) { toast.error(data.message || 'Failed'); return; }
-    setTests(t => [data, ...t]); resetForm(); toast.success('Test created!');
+    if (category && !categories.includes(category)) {
+      const updated = addCategory(category);
+      setCategories(updated);
+    }
+    setTests(t => [data, ...t]);
+    resetForm();
+    toast.success('Test created! Add questions now.');
+    setQuestionsModal(data);
   };
 
   const updateTest = async () => {
     const res = await fetch(`${API_URL}/api/admin/tests/${editingId}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, description: desc, category, subject, duration: Number(duration), startTime: startTime || null, endTime: endTime || null }),
+      method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+      body: JSON.stringify({ title, description: desc, category, subject, duration: Number(duration), startTime: startTime ? new Date(startTime).toISOString() : null, endTime: endTime ? new Date(endTime).toISOString() : null }),
     });
     const data = await res.json();
     if (!res.ok) { toast.error(data.message || 'Failed'); return; }
     toast.edit('Test updated!'); resetForm(); fetchTests();
   };
 
-  const startEdit = (t) => {
-    setEditingId(t._id); setTitle(t.title || ''); setDesc(t.description || '');
-    setCategory(t.category || categories[0] || 'CSE'); setSubject(t.subject || '');
-    setDuration(t.duration || '');
-    setStartTime(t.startTime ? t.startTime.slice(0, 16) : '');
-    setEndTime(t.endTime   ? t.endTime.slice(0, 16)   : '');
-    setActiveTab('Create');
-  };
+  const startEdit = (t) => setEditModal(t);
 
   const deleteTest = (id) => setConfirmDlg({ id });
 
@@ -226,7 +615,9 @@ export default function AdminTests() {
 
   const fetchResults = async (testId) => {
     setResultTestId(testId); setTestResults([]);
-    const res = await fetch(`${API_URL}/api/admin/tests/${testId}/results`);
+    const res = await fetch(`${API_URL}/api/admin/tests/${testId}/results`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+    });
     if (res.ok) setTestResults(await res.json()); else toast.error('Failed to fetch results');
     setActiveTab('Results');
   };
@@ -323,6 +714,15 @@ export default function AdminTests() {
       {questionsModal && (
         <QuestionsModal test={questionsModal} onClose={() => setQuestionsModal(null)} API_URL={API_URL} toast={toast} />
       )}
+      {editModal && (
+        <EditTestModal
+          test={editModal}
+          categories={categories}
+          toast={toast}
+          onClose={() => setEditModal(null)}
+          onSaved={fetchTests}
+        />
+      )}
 
       {/* Header */}
       <div className="at2-header">
@@ -347,7 +747,6 @@ export default function AdminTests() {
         {TABS.map(t => (
           <button key={t} className={`at2-tab ${activeTab === t ? 'at2-tab-active' : ''}`} onClick={() => setActiveTab(t)}>
             {t === 'Create'         && <Plus          size={14} />}
-            {t === 'Questions'      && <BookOpen      size={14} />}
             {t === 'Results'        && <BarChart2     size={14} />}
             {t === 'AI Sets'        && <Brain         size={14} />}
             {t === 'Teacher Tests'  && <GraduationCap size={14} />}
@@ -398,14 +797,54 @@ export default function AdminTests() {
                       key={c}
                       className={`at2-cat-pill ${active ? 'at2-cat-pill-active' : ''}`}
                       style={active ? { background: meta.bg, color: meta.color, borderColor: meta.border } : {}}
-                      onClick={() => setCategory(c)}
+                      onClick={() => { setCategory(c); setShowCustom(false); setCustomCat(''); }}
                       type="button"
                     >
                       {c}
                     </button>
                   );
                 })}
+                {/* Custom category pill */}
+                {(() => {
+                  const isCustomActive = category && !categories.includes(category);
+                  return (
+                    <button
+                      type="button"
+                      className={`at2-cat-pill ${(showCustom || isCustomActive) ? 'at2-cat-pill-active' : ''}`}
+                      style={(showCustom || isCustomActive) ? { background: '#faf5ff', color: '#7c3aed', borderColor: '#c4b5fd' } : {}}
+                      onClick={() => setShowCustom(s => !s)}
+                    >
+                      <Pencil size={10} style={{ marginRight: 4 }} />
+                      {isCustomActive ? category : 'Custom…'}
+                    </button>
+                  );
+                })()}
               </div>
+              {/* Inline custom input */}
+              {showCustom && (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10 }}>
+                  <input
+                    autoFocus
+                    className="at2-input"
+                    value={customCat}
+                    onChange={e => setCustomCat(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && customCat.trim()) { setCategory(customCat.trim()); setShowCustom(false); }
+                      if (e.key === 'Escape') { setShowCustom(false); }
+                    }}
+                    onBlur={() => { if (customCat.trim()) { setCategory(customCat.trim()); setShowCustom(false); } else { setShowCustom(false); } }}
+                    placeholder="Type your category name…"
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => { setShowCustom(false); setCustomCat(''); setCategory(categories[0] || 'CSE'); }}
+                    style={{ padding: '7px 12px', borderRadius: 8, border: '1.5px solid #e2e8f0', background: '#fff', color: '#64748b', fontSize: 12, fontWeight: 600, cursor: 'pointer', flexShrink: 0 }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="at2-field">
@@ -433,172 +872,15 @@ export default function AdminTests() {
                 <button className="at2-btn-ghost" onClick={resetForm}>Cancel</button>
               </>
             ) : (
-              <button className="at2-btn-primary" onClick={createTest}><Plus size={14} /> Create Test</button>
+              <>
+                <button className="at2-btn-primary" onClick={createTest}><Plus size={14} /> Create Test</button>
+                <span style={{ fontSize: 12, color: '#94a3b8', display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <ChevronRight size={13} color="#c4b5fd" />
+                  You'll be taken to add questions right after
+                </span>
+              </>
             )}
           </div>
-        </div>
-      )}
-
-      {/* ── Add Question ── */}
-      {activeTab === 'Questions' && (
-        <div className="at2-card">
-          <div className="at2-card-head">
-            <div className="at2-card-title"><BookOpen size={15} color="#6366f1" /> Add Question</div>
-            <button
-              className={`at2-bulk-toggle ${bulkMode ? 'at2-bulk-toggle-active' : ''}`}
-              onClick={() => { setBulkMode(m => !m); setBulkText(''); setBulkPreview([]); setBulkError(''); }}
-              type="button"
-            >
-              <Upload size={13} /> Bulk Upload
-            </button>
-          </div>
-
-          {/* Custom test selector */}
-          <div className="at2-field at2-span2" style={{ marginBottom: 18 }}>
-            <label className="at2-label">Select Test</label>
-            <div className="at2-custom-select" onClick={() => setTestDropOpen(o => !o)}>
-              <span className={selectedTest ? 'at2-cs-value' : 'at2-cs-placeholder'}>
-                {selectedTestObj ? selectedTestObj.title : '— Choose a test —'}
-              </span>
-              <ChevronDown size={14} className={`at2-cs-arrow ${testDropOpen ? 'at2-cs-arrow-open' : ''}`} />
-              {testDropOpen && (
-                <div className="at2-cs-dropdown" onClick={e => e.stopPropagation()}>
-                  {tests.length === 0 && <div className="at2-cs-empty">No tests yet</div>}
-                  {tests.map(t => {
-                    const meta = CAT_COLORS[t.category] || CAT_FALLBACK;
-                    return (
-                      <div
-                        key={t._id}
-                        className={`at2-cs-option ${selectedTest === t._id ? 'at2-cs-option-active' : ''}`}
-                        onClick={() => { setSelectedTest(t._id); setTestDropOpen(false); }}
-                      >
-                        <span className="at2-cs-opt-badge" style={{ background: meta.bg, color: meta.color }}>{t.category}</span>
-                        <span className="at2-cs-opt-title">{t.title}</span>
-                        {selectedTest === t._id && <CheckCircle size={13} color="#6366f1" style={{ marginLeft: 'auto' }} />}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="at2-field at2-span2" style={{ marginBottom: 16 }}>
-            <label className="at2-label">Question Text</label>
-            <input className="at2-input" value={question} onChange={e => setQuestion(e.target.value)} placeholder="Enter the question…" />
-          </div>
-
-          <div className="at2-options-grid">
-            {options.map((o, i) => (
-              <div key={i} className="at2-option-wrap">
-                <div className="at2-option-badge">{String.fromCharCode(65 + i)}</div>
-                <input
-                  className="at2-input"
-                  value={o}
-                  onChange={e => { const n = [...options]; n[i] = e.target.value; setOptions(n); }}
-                  placeholder={`Option ${String.fromCharCode(65 + i)}`}
-                />
-              </div>
-            ))}
-          </div>
-
-          {/* Correct answer — clickable option buttons */}
-          {options.some(Boolean) && (
-            <div className="at2-field" style={{ marginTop: 16, marginBottom: 20 }}>
-              <label className="at2-label">Correct Answer</label>
-              <div className="at2-answer-picker">
-                {options.map((o, i) => o.trim() ? (
-                  <button
-                    key={i}
-                    type="button"
-                    className={`at2-answer-opt ${answer === o ? 'at2-answer-opt-active' : ''}`}
-                    onClick={() => setAnswer(o)}
-                  >
-                    <span className="at2-answer-letter">{String.fromCharCode(65 + i)}</span>
-                    <span>{o}</span>
-                    {answer === o && <CheckCircle size={13} style={{ marginLeft: 'auto', color: '#059669' }} />}
-                  </button>
-                ) : null)}
-              </div>
-            </div>
-          )}
-
-          {!bulkMode && (
-            <button className="at2-btn-primary" onClick={addQuestion}><Plus size={14} /> Add Question</button>
-          )}
-
-          {/* Bulk upload section */}
-          {bulkMode && (
-            <div className="at2-bulk-section">
-              <div className="at2-bulk-info">
-                <FileText size={13} color="#6366f1" />
-                <span>Upload a <strong>CSV</strong> or <strong>JSON</strong> file, or paste content below.</span>
-              </div>
-              <div className="at2-bulk-format-cards">
-                <div className="at2-bulk-fmt">
-                  <div className="at2-bulk-fmt-title">JSON format</div>
-                  <pre className="at2-bulk-fmt-code">{`[{"question":"Q?","options":["A","B","C","D"],"answer":"A"}]`}</pre>
-                </div>
-                <div className="at2-bulk-fmt">
-                  <div className="at2-bulk-fmt-title">CSV format</div>
-                  <pre className="at2-bulk-fmt-code">{`question,OptionA,OptionB,OptionC,OptionD,answer\nWhat is 2+2?,1,2,4,8,4`}</pre>
-                </div>
-              </div>
-
-              <div className="at2-bulk-upload-area" onClick={() => bulkFileRef.current?.click()}>
-                <Upload size={20} color="#6366f1" />
-                <span>Click to upload .json or .csv file</span>
-                <input ref={bulkFileRef} type="file" accept=".json,.csv" style={{ display: 'none' }} onChange={handleBulkFileUpload} />
-              </div>
-
-              <div className="at2-field" style={{ marginTop: 12 }}>
-                <label className="at2-label">Or paste JSON / CSV here</label>
-                <textarea
-                  className="at2-input at2-textarea"
-                  rows={5}
-                  value={bulkText}
-                  onChange={e => handleBulkTextChange(e.target.value)}
-                  placeholder={'[{"question":"...","options":["A","B","C","D"],"answer":"A"}]'}
-                />
-              </div>
-
-              {bulkError && (
-                <div className="at2-bulk-error">
-                  <AlertCircle size={13} /> {bulkError}
-                </div>
-              )}
-
-              {bulkPreview.length > 0 && (
-                <div className="at2-bulk-preview">
-                  <div className="at2-bulk-preview-head">
-                    <CheckCircle size={13} color="#059669" />
-                    <span>{bulkPreview.length} question{bulkPreview.length !== 1 ? 's' : ''} ready to upload</span>
-                  </div>
-                  <div className="at2-bulk-preview-list">
-                    {bulkPreview.slice(0, 5).map((q, i) => (
-                      <div key={i} className="at2-bulk-preview-item">
-                        <span className="at2-bulk-q-num">{i + 1}</span>
-                        <span className="at2-bulk-q-text">{q.title}</span>
-                        <span className="at2-bulk-q-ans">✓ {q.answer}</span>
-                      </div>
-                    ))}
-                    {bulkPreview.length > 5 && (
-                      <div className="at2-bulk-preview-more">+{bulkPreview.length - 5} more questions…</div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <button
-                className="at2-btn-primary"
-                onClick={submitBulkQuestions}
-                disabled={bulkPreview.length === 0 || !selectedTest}
-                style={{ marginTop: 16 }}
-              >
-                <Upload size={14} /> Upload {bulkPreview.length > 0 ? `${bulkPreview.length} Questions` : 'Questions'}
-              </button>
-            </div>
-          )}
         </div>
       )}
 
@@ -618,8 +900,8 @@ export default function AdminTests() {
                     <div key={i} className="at2-result-row">
                       <div className={`at2-result-rank ${i === 0 ? 'at2-rank-gold' : i === 1 ? 'at2-rank-silver' : i === 2 ? 'at2-rank-bronze' : ''}`}>#{i + 1}</div>
                       <div className="at2-result-info">
-                        <div className="at2-result-name">{r.user?.name || r.user?.email || 'Unknown'}</div>
-                        <div className="at2-result-date">{new Date(r.createdAt).toLocaleDateString()}</div>
+                        <div className="at2-result-name">{r.userId?.name || r.userId?.email || 'Unknown'}</div>
+                        <div className="at2-result-date">{new Date(r.submittedAt || r.createdAt).toLocaleDateString()}</div>
                       </div>
                       <div className="at2-result-bar-wrap">
                         <div className="at2-result-bar" style={{ width: `${pct}%`, background: pass ? '#10b981' : '#f43f5e' }} />
@@ -880,7 +1162,7 @@ export default function AdminTests() {
       {activeTab !== 'AI Sets' && activeTab !== 'Teacher Tests' && (
         <div className="at2-list-section">
           <div className="at2-list-head">
-            <h2 className="at2-list-title">All Tests<span className="at2-list-count">{filtered.length}</span></h2>
+            <h2 className="at2-list-title">All Admin Tests<span className="at2-list-count">{filtered.length}</span></h2>
             <div className="at2-search-box">
               <Search size={13} color="#9ca3af" />
               <input placeholder="Search tests…" value={search} onChange={e => setSearch(e.target.value)} />
@@ -890,29 +1172,75 @@ export default function AdminTests() {
           {filtered.length > 0 ? (
             <div className="at2-grid">
               {pgTests.slice.map(t => {
-                const cat    = CAT_COLORS[t.category] || CAT_FALLBACK;
-                const qCount = t.questions?.length || 0;
+                const cat      = CAT_COLORS[t.category] || CAT_FALLBACK;
+                const qCount   = t.questionCount ?? t.questions?.length ?? 0;
+                const attempts = t.attemptCount ?? 0;
+                const creator  = t.teacherId?.name || t.teacherName || 'Admin';
+                const createdAgo = timeAgo(t.createdAt);
+                const isNew    = t.createdAt && (Date.now() - new Date(t.createdAt)) < 7 * 24 * 3600 * 1000;
+                const isScheduled = t.startTime || t.endTime;
+
+                const pubStatus = {
+                  pending:  { label: 'Pending',  bg: '#fffbeb', color: '#d97706', border: '#fde68a' },
+                  approved: { label: 'Published', bg: '#f0fdf4', color: '#16a34a', border: '#bbf7d0' },
+                  rejected: { label: 'Rejected', bg: '#fef2f2', color: '#dc2626', border: '#fecaca' },
+                }[t.publishStatus] || null;
+
                 return (
                   <div key={t._id} className="at2-test-card">
+                    {/* Top row: category + status badges + actions */}
                     <div className="at2-test-card-top">
-                      <span className="at2-cat-badge" style={{ background: cat.bg, color: cat.color, border: `1px solid ${cat.border}` }}>{t.category}</span>
+                      <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
+                        <span className="at2-cat-badge" style={{ background: cat.bg, color: cat.color, border: `1px solid ${cat.border}` }}>{t.category}</span>
+                        {isNew && <span style={{ fontSize:10, fontWeight:700, background:'#fef3c7', color:'#b45309', border:'1px solid #fde68a', borderRadius:20, padding:'1px 7px', letterSpacing:0.3 }}>NEW</span>}
+                        {pubStatus && <span style={{ fontSize:10, fontWeight:700, background: pubStatus.bg, color: pubStatus.color, border:`1px solid ${pubStatus.border}`, borderRadius:20, padding:'1px 7px' }}>{pubStatus.label}</span>}
+                      </div>
                       <div className="at2-test-actions">
                         <button className="at2-icon-btn" onClick={() => setQuestionsModal(t)} title="View Questions"><Eye size={13} /></button>
                         <button className="at2-icon-btn" onClick={() => startEdit(t)} title="Edit"><Pencil size={13} /></button>
                         <button className="at2-icon-btn at2-icon-danger" onClick={() => deleteTest(t._id)} title="Delete"><Trash2 size={13} /></button>
                       </div>
                     </div>
+
                     <h3 className="at2-test-title">{t.title}</h3>
                     {t.description && <p className="at2-test-desc">{t.description}</p>}
+
+                    {/* Meta chips */}
                     <div className="at2-test-meta">
                       <span className="at2-meta-chip"><Clock size={11} /> {t.duration} mins</span>
                       <span className="at2-meta-chip"><BookOpen size={11} /> {qCount} Q{qCount !== 1 ? 's' : ''}</span>
+                      <span className="at2-meta-chip" style={attempts > 0 ? { background:'#eef2ff', color:'#4f46e5', borderColor:'#c7d2fe' } : {}}>
+                        <Users size={11} /> {attempts} attempt{attempts !== 1 ? 's' : ''}
+                      </span>
                       {t.subject && <span className="at2-meta-chip"><Tag size={11} /> {t.subject}</span>}
                     </div>
+
+                    {/* Scheduled window */}
+                    {isScheduled && (
+                      <div style={{ display:'flex', alignItems:'center', gap:5, fontSize:11, color:'#7c3aed', background:'#faf5ff', border:'1px solid #e9d5ff', borderRadius:7, padding:'4px 9px', marginTop:4 }}>
+                        <Calendar size={11} />
+                        {t.startTime && <span>From {new Date(t.startTime).toLocaleDateString()} {new Date(t.startTime).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}</span>}
+                        {t.startTime && t.endTime && <span style={{ color:'#c4b5fd' }}>→</span>}
+                        {t.endTime && <span>Until {new Date(t.endTime).toLocaleDateString()} {new Date(t.endTime).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}</span>}
+                      </div>
+                    )}
+
                     {t.shareCode && <AdminShareCode code={t.shareCode} />}
-                    <div className="at2-test-footer">
-                      <button className="at2-results-btn" onClick={() => fetchResults(t._id)}>
-                        <TrendingUp size={12} /> View Results <ChevronRight size={12} />
+
+                    {/* Footer: creator + results btn */}
+                    <div className="at2-test-footer" style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 }}>
+                      {/* Creator strip */}
+                      <div style={{ display:'flex', alignItems:'center', gap:6, minWidth:0 }}>
+                        <div style={{ width:22, height:22, borderRadius:'50%', background:'#e0e7ff', color:'#4f46e5', display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:800, flexShrink:0 }}>
+                          {creator.charAt(0).toUpperCase()}
+                        </div>
+                        <div style={{ minWidth:0 }}>
+                          <div style={{ fontSize:11, fontWeight:600, color:'#374151', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:110 }}>{creator}</div>
+                          <div style={{ fontSize:10, color:'#9ca3af' }}>{createdAgo}</div>
+                        </div>
+                      </div>
+                      <button className="at2-results-btn" onClick={() => setResultsModal(t)}>
+                        <TrendingUp size={12} /> Results <ChevronRight size={12} />
                       </button>
                     </div>
                   </div>
@@ -931,12 +1259,22 @@ export default function AdminTests() {
           message="Delete this test and all its questions/results? This cannot be undone."
           type="danger"
           onConfirm={() => {
-            fetch(`${API_URL}/api/admin/tests/${confirmDlg.id}`, { method: 'DELETE' })
-              .then(() => { fetchTests(); toast.delete('Test deleted'); });
+            if (confirmDlg.onConfirm) {
+              confirmDlg.onConfirm();
+            } else {
+              fetch(`${API_URL}/api/admin/tests/${confirmDlg.id}`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+              }).then(() => { fetchTests(); toast.delete('Test deleted'); });
+            }
             setConfirmDlg(null);
           }}
           onCancel={() => setConfirmDlg(null)}
         />
+      )}
+
+      {resultsModal && (
+        <TestResultsModal test={resultsModal} onClose={() => setResultsModal(null)} />
       )}
     </div>
   );

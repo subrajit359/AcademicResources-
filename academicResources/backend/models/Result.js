@@ -17,12 +17,23 @@ const resultSchema = new mongoose.Schema({
   total: Number,
   answers: Object,
 
+  questionTimings: {
+    type: Map,
+    of: Number,
+    default: {},
+  },
+
   violations: [
     {
       reason: { type: String },
       at:     { type: Date },
     }
   ],
+
+  reattemptAllowed: {
+    type: Boolean,
+    default: false,
+  },
 
   submittedAt: {
     type: Date,

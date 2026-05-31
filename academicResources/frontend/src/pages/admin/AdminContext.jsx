@@ -48,8 +48,11 @@ export function AdminProvider({ children }) {
   }, []);
 
   const fetchTests = useCallback(async () => {
-    const res = await fetch(`${API_URL}/api/admin/tests`);
-    if (res.ok) setTests(await res.json());
+    const res = await fetch(`${API_URL}/api/admin/tests?limit=100`, { headers: authHeader() });
+    if (res.ok) {
+      const d = await res.json();
+      setTests(Array.isArray(d) ? d : (d.tests || []));
+    }
   }, []);
 
   const fetchPublishRequests = useCallback(async () => {

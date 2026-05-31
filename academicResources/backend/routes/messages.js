@@ -33,7 +33,7 @@ router.post('/', async (req, res) => {
 
     res.status(201).json({ message: 'Message sent successfully' });
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -43,7 +43,7 @@ router.get('/', verifyAdmin, async (req, res) => {
     const messages = await Message.find().sort({ createdAt: -1 });
     res.json(messages);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -53,7 +53,7 @@ router.get('/unread-count', verifyAdmin, async (req, res) => {
     const count = await Message.countDocuments({ read: false });
     res.json({ count });
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -63,7 +63,7 @@ router.put('/read-all', verifyAdmin, async (req, res) => {
     await Message.updateMany({ read: false }, { read: true });
     res.json({ message: 'All messages marked as read' });
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -82,7 +82,7 @@ router.put('/:id/read', verifyAdmin, async (req, res) => {
 
     res.json(message);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -95,7 +95,7 @@ router.delete('/:id', verifyAdmin, async (req, res) => {
     }
     res.json({ message: 'Message deleted successfully' });
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 

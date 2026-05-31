@@ -96,11 +96,11 @@ function ScoreRing({ pct, size = 64 }) {
 export default function StudentHome() {
   const { user } = useAuth();
   const navigate  = useNavigate();
-  const [results,   setResults]   = useState([]);
-  const [loading,   setLoading]   = useState(true);
-  const [code,      setCode]      = useState('');
-  const [codeErr,   setCodeErr]   = useState('');
-  const [myUploads, setMyUploads] = useState([]);
+  const [results,      setResults]      = useState([]);
+  const [loading,      setLoading]      = useState(true);
+  const [code,         setCode]         = useState('');
+  const [codeErr,      setCodeErr]      = useState('');
+  const [myUploads,    setMyUploads]    = useState([]);
 
   const selectedCategory = localStorage.getItem('selectedCategory');
 
@@ -119,7 +119,10 @@ export default function StudentHome() {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(r => r.json())
-      .then(data => setMyUploads(Array.isArray(data) ? data.slice(0, 4) : []))
+      .then(data => {
+        const list = Array.isArray(data) ? data : (data.resources || []);
+        setMyUploads(list.slice(0, 4));
+      })
       .catch(() => {});
   }, [user?.id]);
 
@@ -131,9 +134,10 @@ export default function StudentHome() {
   const tip = TIPS[new Date().getDay() % TIPS.length];
 
   const total     = results.length;
-  const avgScore  = total ? Math.round(results.reduce((s, r) => s + (r.score / r.total) * 100, 0) / total) : 0;
-  const bestScore = total ? Math.round(Math.max(...results.map(r => (r.score / r.total) * 100))) : 0;
-  const passed    = results.filter(r => (r.score / r.total) >= 0.5).length;
+  const safePct   = (r) => (r.total > 0 ? (r.score / r.total) * 100 : 0);
+  const avgScore  = total ? Math.round(results.reduce((s, r) => s + safePct(r), 0) / total) : 0;
+  const bestScore = total ? Math.round(Math.max(...results.map(safePct))) : 0;
+  const passed    = results.filter(r => r.total > 0 && (r.score / r.total) >= 0.5).length;
   const recent    = results.slice(0, 5);
   const chartData = results.slice(0, 7).reverse();
 
@@ -145,7 +149,7 @@ export default function StudentHome() {
   results.forEach(r => {
     const subj = r.testId?.subject || r.testId?.category || 'General';
     if (!subjectMap[subj]) subjectMap[subj] = { sum: 0, count: 0 };
-    subjectMap[subj].sum   += (r.score / r.total) * 100;
+    subjectMap[subj].sum   += (r.total > 0 ? (r.score / r.total) * 100 : 0);
     subjectMap[subj].count += 1;
   });
   const subjectData = Object.entries(subjectMap)
@@ -164,7 +168,7 @@ export default function StudentHome() {
     { label: 'Browse Resources', desc: 'Notes, papers & books',      Icon: Search,       to: '/resources',      color: '#2563eb' },
     { label: 'AI Practice',      desc: 'Generate smart tests',        Icon: Brain,        to: '/ai-generator',   color: '#7c3aed' },
     { label: 'Upload Notes',     desc: 'Share with community',        Icon: Upload,       to: '/upload',         color: '#059669' },
-    { label: 'Official Tests',   desc: `${selectedCategory} papers`,  Icon: FileText,     to: '/official-tests', color: '#f59e0b' },
+    { label: 'Test History',     desc: 'Last 10 attempts',            Icon: Clock,        to: '/test-history',   color: '#f59e0b' },
   ];
 
   const handleEnterCode = (e) => {
@@ -272,6 +276,36 @@ export default function StudentHome() {
         </form>
       </motion.div>
 
+      {/* ── Check Result by code or link ── */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.34 }}
+        onClick={() => navigate('/leaderboard')}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 14,
+          background: 'linear-gradient(135deg, #fffbeb, #fef3c7)',
+          border: '1.5px solid #fcd34d',
+          borderRadius: 14, padding: '14px 20px',
+          cursor: 'pointer', marginBottom: 4,
+          transition: 'box-shadow 0.2s, transform 0.2s',
+        }}
+        whileHover={{ scale: 1.01, boxShadow: '0 4px 16px rgba(245,158,11,0.2)' }}
+        whileTap={{ scale: 0.99 }}
+      >
+        <div style={{
+          width: 42, height: 42, borderRadius: 12, flexShrink: 0,
+          background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          boxShadow: '0 4px 10px rgba(245,158,11,0.35)',
+        }}>
+          <Trophy size={20} color="#fff" />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 800, fontSize: 14, color: '#92400e' }}>Check Test Results</div>
+          <div style={{ fontSize: 12, color: '#b45309', marginTop: 2 }}>Enter a code or share link to view the leaderboard</div>
+        </div>
+        <ArrowRight size={18} color="#d97706" style={{ flexShrink: 0 }} />
+      </motion.div>
+
       {/* ── Subject performance breakdown ── */}
       {subjectData.length > 0 && !loading && (
         <motion.div className="sh-card sh-subject-card" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3, duration: 0.44 }}>
@@ -329,7 +363,7 @@ export default function StudentHome() {
           ) : (
             <div className="sh-results-list">
               {recent.map((r, i) => {
-                const pct   = Math.round((r.score / r.total) * 100);
+                const pct   = r.total > 0 ? Math.round((r.score / r.total) * 100) : 0;
                 const grade = getGrade(pct);
                 const date  = new Date(r.submittedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
                 return (
@@ -384,7 +418,7 @@ export default function StudentHome() {
               <>
                 <div className="sh-chart">
                   {chartData.map((r, i) => {
-                    const pct   = Math.round((r.score / r.total) * 100);
+                    const pct   = r.total > 0 ? Math.round((r.score / r.total) * 100) : 0;
                     const grade = getGrade(pct);
                     return (
                       <div key={r._id} className="sh-chart-col" title={`${r.testId?.title || 'Test'}: ${pct}%`}>
